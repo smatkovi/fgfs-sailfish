@@ -257,3 +257,122 @@ Auflösung sollten das deutlich verbessern.
 
 Die Patches folgen der Lizenz des jeweiligen Projekts: Mesa MIT,
 OSG LGPL-artig (OSGPL), SimGear und FlightGear GPLv2+, PLIB LGPL.
+
+## Nativer GLES-Zweig
+
+Neben dem Zink-Weg existiert ein zweiter Bau, der ohne Mesa auskommt:
+OpenSceneGraph in den Profilen GLES2 und GLES3, direkt auf dem
+EGL-Stack des Geräts. Er ist als eigenes Paket
+(`fgfs-sailfish-gles`) verpackt und in harbour-fgview auswählbar.
+
+Kurz gesagt: er läuft, bringt aber keinen Gewinn und kostet einiges.
+Interessant sind vor allem die drei Fehler, die auf dem Weg dorthin
+gefunden wurden.
+
+### Was dabei entfällt
+
+Alles, was die Fixed-Function-Pipeline braucht:
+
+- ShivaVG und damit der Canvas — die Glascockpit-Anzeigen
+- die PUI-Oberfläche: Menüs, Dialoge, Knöpfe
+- das HUD
+- das 2D-Panel
+- die VASI/PAPI-Anflugbefeuerung
+- `tr.cxx`, der Tile-Renderer für hochauflösende Screenshots
+
+Dazu kommt, dass FlightGears Effect-Shader in Desktop-GLSL 1.20
+geschrieben sind und `gl_TexCoord`, `gl_LightSource` und `gl_Fog`
+benutzen. Unter GLES scheitern sie an der Sprachversion:
+
+```
+Language version '120' unknown, this compiler only supports up to
+version '320 es'
+```
+
+Betroffen sind unter anderem `default.vert`, `default.frag` und
+`ubershader` — also die Shader, die alles Sichtbare zeichnen. Ohne
+eine Konvertierung der Shader in FGData bleibt das Bild leer.
+
+### Drei Fehler, die dabei zutage kamen
+
+**TLS-Kollision mit Bionic.** Der Mali-Treiber legt den aktuellen
+GL-Kontext in Bionics TLS-Slot 3 ab, also bei `TP+24`. Auf aarch64
+beginnt der statische TLS-Block bei `TP+16`, und das Hauptprogramm
+bekommt ihn vor allen Bibliotheken — `libtls-padding.so` kann daran
+nichts ändern, auch nicht per `LD_PRELOAD`. FlightGears eigene
+`thread_local`-Variablen landen damit genau auf den Bionic-Slots und
+überschreiben den Kontextzeiger; `glViewport` liest ihn danach als
+`0x6f00000000`, also mit auf null gesetzter unterer Hälfte, und der
+Treiber stürzt ab.
+
+Behoben durch ein 128-Byte-Feld als erste TLS-Variable im ersten
+Objekt des Hauptprogramms (`flightgear/gles_stubs.cxx`). Das dürfte
+jede hybris-Portierung einer nativen GLES-Anwendung betreffen.
+
+**`glGetIntegerv` ohne aktuellen Kontext.** `FGRenderer::update()` in
+`renderer_compositor.cxx` fragt `GL_MAX_TEXTURE_SIZE` ab, läuft aber
+in der Hauptschleife ohne aktuellen GL-Kontext. Desktop-Treiber
+liefern dort Unsinn — der Code fängt das mit einer Bereichsprüfung ab
+und der Kommentar im Original erwähnt es sogar. Der Mali-Blob stürzt
+stattdessen ab. Die Abfrage steht jetzt hinter einer Kontextprüfung.
+
+**Kein `EGL_KHR_surfaceless_context`.** Der Blob bietet es nicht an,
+`eglMakeCurrent` mit `EGL_NO_SURFACE` bringt ihn um. `GraphicsWindowEGL`
+legt deshalb eine Pbuffer-Surface an; gerendert wird weiterhin ins FBO.
+
+### Zero-Copy und warum es nativ zunächst nicht ging
+
+Der dmabuf-Weg über `/dev/dma_heap/system` funktioniert nur unter
+Zink: hybris-EGL kennt kein `EGL_EXT_image_dma_buf_import`, der
+Simulator kann den Puffer also gar nicht als Renderziel benutzen. Er
+schreibt trotzdem die Metadaten ins Segment, und der Presenter sieht
+einen Puffer, in den nie jemand zeichnet — schwarzes Bild. Die nativen
+Backends benutzen deshalb den Readback-Pfad.
+
+Es gibt aber einen Weg, der unter allen Backends trägt:
+`EGL_HYBRIS_native_buffer2`. Die Funktionen sind vorhanden, auch wenn
+sie weder in Headern noch im Symbolexport auftauchen — `eglGetProcAddress`
+liefert sie. Damit lässt sich ein Puffer in einem Prozess anlegen, mit
+`eglHybrisSerializeNativeBuffer` beschreiben, die Beschreibung über
+einen Unix-Socket übergeben und im anderen Prozess mit
+`eglHybrisCreateRemoteBuffer` wiederherstellen.
+
+Bemerkenswert: das umgeht die Gralloc-Hürde. `hybris_gralloc_initialize`
+schlägt auf Geräten mit AIDL-Allocator fehl, weil libhybris nur HIDL
+kennt — der EGL-Pfad kommt trotzdem an den Allokator heran.
+
+Die Testprogramme unter `tools/` belegen beides:
+
+- `hybshare.c` — Puffer anlegen, serialisieren, im zweiten Prozess
+  wiederherstellen, per CPU beschreiben und im ersten lesen
+- `hybgl.c` — dasselbe, aber der zweite Prozess rendert mit der GPU
+  hinein (EGLImage über `EGL_NATIVE_BUFFER_HYBRIS`, als
+  FBO-Farbattachment)
+- `hybprovider.c` — stellt einen Puffer für den Simulator bereit und
+  schreibt heraus, was hineingezeichnet wurde
+
+`GraphicsWindowEGL` nimmt diesen Weg, sobald `FGFS_HYB_SOCKET` gesetzt
+ist. Der Presenter besitzt dann den Puffer und kann ihn als Textur
+importieren, statt ihn zu kopieren.
+
+### Messwerte
+
+Jolla Phone 2026, 1024x768, ufo und c172p bei LOWW. Die Streuung
+zwischen Läufen ist beträchtlich — das Gerät drosselt thermisch, und
+Unterschiede unter etwa fünf Bildern sind nicht aussagekräftig.
+
+| | ufo | c172p |
+|---|---|---|
+| Zink, Zero-Copy, Fence, `ZINK_DESCRIPTORS=lazy` | 47 | 11 |
+| GLES2, Readback, `glFlush` | 37 | 11 |
+| GLES3, Readback, `glFlush` | 44 | — |
+
+`ZINK_DESCRIPTORS=lazy` ist unter Zink rund 30 Prozent wert (8,5 auf
+11 bei der c172p). Renderoptionen dagegen nicht: mit abgeschalteten
+Shadern, Wolken und auf 3 km reduzierter Sicht liefert die c172p 10
+statt 11 Bilder. Die Zeit steckt nicht im Zeichnen, sondern in der
+Zahl der Zeichenaufrufe und Zustandswechsel des Flugzeugmodells —
+und die ist in beiden Welten dieselbe.
+
+Wer die Cessna flüssig fliegen will, muss am Modell ansetzen, nicht am
+Grafikstack.

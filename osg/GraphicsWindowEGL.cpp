@@ -26,6 +26,24 @@
 #include <unistd.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/ioctl.h>
+#include <linux/types.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <pthread.h>
+
+/* dma-heap: der Kernel alloziert, beide Seiten importieren.
+   Der Mali-Treiber meldet exportable=0, importable=1 - deshalb
+   dieser Umweg statt eines Exports aus Vulkan heraus. */
+struct dma_heap_allocation_data {
+    __u64 len;
+    __u32 fd;
+    __u32 fd_flags;
+    __u64 heap_flags;
+};
+#ifndef DMA_HEAP_IOCTL_ALLOC
+#define DMA_HEAP_IOCTL_ALLOC _IOWR('H', 0, struct dma_heap_allocation_data)
+#endif
 
 /* GL-Konstanten und -Prototypen ohne GL/gl.h, damit wir nicht gegen
    glvnd-Header linken muessen - die Symbole kommen aus libOpenGL. */
@@ -34,6 +52,34 @@
 #define GL_UNSIGNED_BYTE  0x1401
 #define GL_PACK_ALIGNMENT 0x0D05
 #endif
+/* Unter GLES2 fehlen einige Desktop-Konstanten; die Zahlenwerte
+   sind identisch. */
+#ifndef GL_DEPTH24_STENCIL8
+#define GL_DEPTH24_STENCIL8         0x88F0
+#endif
+#ifndef GL_DEPTH_STENCIL_ATTACHMENT
+#define GL_DEPTH_STENCIL_ATTACHMENT 0x821A
+#endif
+#ifndef GL_READ_ONLY
+#define GL_READ_ONLY                0x88B8
+#endif
+
+#ifndef GL_TEXTURE_2D
+#define GL_TEXTURE_2D               0x0DE1
+#define GL_TEXTURE_MIN_FILTER       0x2801
+#define GL_TEXTURE_MAG_FILTER       0x2800
+#define GL_NEAREST                  0x2600
+#define GL_CLAMP_TO_EDGE            0x812F
+#define GL_TEXTURE_WRAP_S           0x2802
+#define GL_TEXTURE_WRAP_T           0x2803
+#endif
+
+#ifndef GL_PIXEL_PACK_BUFFER
+#define GL_PIXEL_PACK_BUFFER        0x88EB
+#define GL_STREAM_READ              0x88E1
+#define GL_READ_ONLY                0x88B8
+#endif
+
 #ifndef GL_FRAMEBUFFER
 #define GL_FRAMEBUFFER              0x8D40
 #define GL_RENDERBUFFER             0x8D41
@@ -69,6 +115,58 @@ namespace {
     PFN_v_icp   p_DeleteFramebuffers = nullptr;
     PFN_v_icp   p_DeleteRenderbuffers = nullptr;
 
+    typedef void  (*PFN_v_ip2)(int, unsigned*);
+    typedef void  (*PFN_v_uu2)(unsigned, unsigned);
+    typedef void  (*PFN_v_uxpu)(unsigned, long, const void*, unsigned);
+    typedef void* (*PFN_p_uu)(unsigned, unsigned);
+    typedef unsigned char (*PFN_b_u)(unsigned);
+
+    PFN_v_ip2   p_GenBuffers = nullptr;
+    PFN_v_uu2   p_BindBuffer = nullptr;
+    PFN_v_uxpu  p_BufferData = nullptr;
+    PFN_p_uu    p_MapBuffer = nullptr;
+    PFN_b_u     p_UnmapBuffer = nullptr;
+    PFN_v_icp   p_DeleteBuffers = nullptr;
+
+    typedef void (*PFN_tex_img)(unsigned, int, int, int, int, int,
+                                unsigned, unsigned, const void*);
+    typedef void (*PFN_tex_par)(unsigned, unsigned, int);
+    typedef void (*PFN_fb_tex)(unsigned, unsigned, unsigned, unsigned, int);
+
+    PFN_v_ip     p_GenTextures = nullptr;
+    PFN_v_uu     p_BindTexture = nullptr;
+    PFN_tex_img  p_TexImage2D = nullptr;
+    PFN_tex_par  p_TexParameteri = nullptr;
+    PFN_fb_tex   p_FramebufferTexture2D = nullptr;
+    PFN_v_icp    p_DeleteTextures = nullptr;
+
+    bool loadTexEntryPoints()
+    {
+        if (p_GenTextures) return true;
+        p_GenTextures   = (PFN_v_ip)    eglGetProcAddress("glGenTextures");
+        p_BindTexture   = (PFN_v_uu)    eglGetProcAddress("glBindTexture");
+        p_TexImage2D    = (PFN_tex_img) eglGetProcAddress("glTexImage2D");
+        p_TexParameteri = (PFN_tex_par) eglGetProcAddress("glTexParameteri");
+        p_FramebufferTexture2D =
+            (PFN_fb_tex) eglGetProcAddress("glFramebufferTexture2D");
+        p_DeleteTextures = (PFN_v_icp)  eglGetProcAddress("glDeleteTextures");
+        return p_GenTextures && p_BindTexture && p_TexImage2D
+            && p_TexParameteri && p_FramebufferTexture2D;
+    }
+
+    bool loadPboEntryPoints()
+    {
+        if (p_GenBuffers) return true;
+        p_GenBuffers    = (PFN_v_ip2) eglGetProcAddress("glGenBuffers");
+        p_BindBuffer    = (PFN_v_uu2) eglGetProcAddress("glBindBuffer");
+        p_BufferData    = (PFN_v_uxpu)eglGetProcAddress("glBufferData");
+        p_MapBuffer     = (PFN_p_uu)  eglGetProcAddress("glMapBuffer");
+        p_UnmapBuffer   = (PFN_b_u)   eglGetProcAddress("glUnmapBuffer");
+        p_DeleteBuffers = (PFN_v_icp) eglGetProcAddress("glDeleteBuffers");
+        return p_GenBuffers && p_BindBuffer && p_BufferData
+            && p_MapBuffer && p_UnmapBuffer;
+    }
+
     bool loadFboEntryPoints()
     {
         if (p_GenFramebuffers) return true;
@@ -101,10 +199,16 @@ struct FgFrameHeader {
     uint64_t sequence;
     uint32_t activeSlot;
     uint32_t reserved;
+    /* Zero-Copy: statt Bilddaten nur der Verweis auf den dmabuf.
+       Der Presenter oeffnet ihn ueber /proc/<pid>/fd/<fd>. */
+    uint32_t dmabufPid;      /* 0 = kein dmabuf, klassischer Readback */
+    uint32_t dmabufFd;
+    uint32_t dmabufStride;
+    uint32_t dmabufFourcc;
 };
 
 static const uint32_t FGFR_MAGIC = 0x46474652u;   /* 'FGFR' */
-static const size_t   FGFR_HDR   = 32;
+static const size_t   FGFR_HDR   = 48;
 
 class ShmFrameWriter
 {
@@ -118,6 +222,8 @@ public:
 
         _w = w; _h = h;
         _slotBytes = size_t(w) * size_t(h) * 4u;
+        /* Auch beim Zero-Copy die volle Groesse anlegen: faellt der
+           Import spaeter aus, ist der Readback-Pfad sofort nutzbar. */
         _total = FGFR_HDR + 2 * _slotBytes;
 
         int fd = ::shm_open(_name.c_str(), O_CREAT | O_RDWR, 0666);
@@ -148,6 +254,10 @@ public:
         hdr->sequence   = 0;
         hdr->activeSlot = 0;
         hdr->reserved   = 0;
+        hdr->dmabufPid  = 0;
+        hdr->dmabufFd   = 0;
+        hdr->dmabufStride = 0;
+        hdr->dmabufFourcc = 0;
 
         OSG_NOTICE << "ShmFrameWriter: " << _name << " bereit, "
                    << w << "x" << h << ", " << (_total / 1024) << " KiB"
@@ -175,6 +285,19 @@ public:
         __atomic_add_fetch(&hdr->sequence, 1, __ATOMIC_ACQ_REL);
     }
 
+    /* Beim Zero-Copy stehen im Segment nur Metadaten. Die
+       Sequenznummer bleibt als Fertig-Signal erhalten. */
+    void publishDmabuf(int pid, int fd, uint32_t stride, uint32_t fourcc)
+    {
+        FgFrameHeader* hdr = reinterpret_cast<FgFrameHeader*>(_base);
+        __atomic_add_fetch(&hdr->sequence, 1, __ATOMIC_ACQ_REL);
+        hdr->dmabufPid    = uint32_t(pid);
+        hdr->dmabufFd     = uint32_t(fd);
+        hdr->dmabufStride = stride;
+        hdr->dmabufFourcc = fourcc;
+        __atomic_add_fetch(&hdr->sequence, 1, __ATOMIC_ACQ_REL);
+    }
+
     bool ready() const { return _base != nullptr; }
     size_t slotBytes() const { return _slotBytes; }
 
@@ -197,6 +320,154 @@ private:
 ShmFrameWriter g_shm;
 
 } // anonymous namespace
+
+
+/* ------------------------------------------------------------------ *
+ *  Uebergabe des dmabuf-Deskriptors per SCM_RIGHTS
+ *
+ *  /proc/<pid>/fd/<n> laesst sich fuer anonyme Inodes nicht erneut
+ *  oeffnen (ENXIO), deshalb dieser Weg. Der Deskriptor wandert einmal
+ *  pro Presenter ueber den Socket, nicht pro Frame.
+ * ------------------------------------------------------------------ */
+namespace {
+
+struct FdServer {
+    int listenFd = -1;
+    int payloadFd = -1;
+    int fenceFd = -1;
+    bool handedOutBuffer = false;
+    pthread_mutex_t fenceLock = PTHREAD_MUTEX_INITIALIZER;
+    pthread_t thread;
+    bool running = false;
+
+    static void* loop(void* arg)
+    {
+        FdServer* self = static_cast<FdServer*>(arg);
+        while (self->running) {
+            int c = ::accept(self->listenFd, nullptr, nullptr);
+            if (c < 0) {
+                if (errno == EINTR) continue;
+                break;
+            }
+            self->sendFd(c);
+            ::close(c);
+        }
+        return nullptr;
+    }
+
+    /* Der Fence wechselt pro Frame. Der jeweils juengste wird
+       vorgehalten; der vorige wird geschlossen. */
+    void setFence(int fd)
+    {
+        pthread_mutex_lock(&fenceLock);
+        if (fenceFd >= 0) ::close(fenceFd);
+        fenceFd = fd;
+        pthread_mutex_unlock(&fenceLock);
+    }
+
+    int takeFence()
+    {
+        pthread_mutex_lock(&fenceLock);
+        const int fd = fenceFd;
+        fenceFd = -1;
+        pthread_mutex_unlock(&fenceLock);
+        return fd;
+    }
+
+    void sendFd(int conn)
+    {
+        char dummy = 'F';
+        struct iovec iov;
+        iov.iov_base = &dummy;
+        iov.iov_len = 1;
+
+        /* Erste Anfrage bekommt den dmabuf, jede weitere den
+           aktuellen Fence. Der Presenter unterscheidet am Byte. */
+        int fence = takeFence();
+        int toSend = payloadFd;
+        if (handedOutBuffer && fence >= 0) {
+            toSend = fence;
+            dummy = 'S';                /* Sync statt Buffer */
+        } else {
+            handedOutBuffer = true;
+        }
+
+        char cbuf[CMSG_SPACE(sizeof(int))];
+        memset(cbuf, 0, sizeof cbuf);
+
+        struct msghdr msg;
+        memset(&msg, 0, sizeof msg);
+        msg.msg_iov = &iov;
+        msg.msg_iovlen = 1;
+        msg.msg_control = cbuf;
+        msg.msg_controllen = sizeof cbuf;
+
+        struct cmsghdr* cm = CMSG_FIRSTHDR(&msg);
+        cm->cmsg_level = SOL_SOCKET;
+        cm->cmsg_type = SCM_RIGHTS;
+        cm->cmsg_len = CMSG_LEN(sizeof(int));
+        memcpy(CMSG_DATA(cm), &toSend, sizeof(int));
+
+        if (::sendmsg(conn, &msg, 0) < 0)
+            OSG_WARN << "FdServer: sendmsg fehlgeschlagen" << std::endl;
+
+        if (toSend == fence) ::close(fence);
+    }
+
+    bool start(int fd, const char* path)
+    {
+        payloadFd = fd;
+
+        listenFd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        if (listenFd < 0) return false;
+
+        ::unlink(path);
+
+        struct sockaddr_un addr;
+        memset(&addr, 0, sizeof addr);
+        addr.sun_family = AF_UNIX;
+        strncpy(addr.sun_path, path, sizeof(addr.sun_path) - 1);
+
+        if (::bind(listenFd, (struct sockaddr*)&addr, sizeof addr) < 0) {
+            OSG_WARN << "FdServer: bind auf " << path
+                     << " fehlgeschlagen" << std::endl;
+            ::close(listenFd); listenFd = -1;
+            return false;
+        }
+        ::chmod(path, 0666);
+
+        if (::listen(listenFd, 4) < 0) {
+            ::close(listenFd); listenFd = -1;
+            return false;
+        }
+
+        running = true;
+        if (::pthread_create(&thread, nullptr, &FdServer::loop, this) != 0) {
+            running = false;
+            ::close(listenFd); listenFd = -1;
+            return false;
+        }
+        OSG_WARN << "FdServer: uebergibt dmabuf ueber " << path << std::endl;
+        return true;
+    }
+};
+
+FdServer g_fdServer;
+
+} // anonymous namespace
+
+/* Desktop-GL oder GLES2 - der Rest des Codes ist identisch. */
+#if defined(OSG_GLES2_AVAILABLE) || defined(OSG_GLES3_AVAILABLE)
+#  define FGFS_EGL_API        EGL_OPENGL_ES_API
+#  define FGFS_EGL_RENDERABLE EGL_OPENGL_ES2_BIT
+#  define FGFS_EGL_CTX_ATTR   EGL_CONTEXT_CLIENT_VERSION
+#  define FGFS_EGL_CTX_VER    2
+#else
+#  define FGFS_EGL_API        EGL_OPENGL_API
+#  define FGFS_EGL_RENDERABLE EGL_OPENGL_BIT
+#  define FGFS_EGL_CTX_ATTR   EGL_CONTEXT_MAJOR_VERSION
+#  define FGFS_EGL_CTX_VER    3
+#endif
 
 namespace osgViewer {
 
@@ -246,10 +517,21 @@ public:
             EGL_NONE
         };
 
-        (void)pbAttr;
-        _surface = EGL_NO_SURFACE;
+        /* Der Mali-Blob bietet kein EGL_KHR_surfaceless_context;
+           eglMakeCurrent mit EGL_NO_SURFACE stuerzt dort ab. Eine
+           Pbuffer-Surface gibt dem Kontext ein Ziel - gerendert wird
+           trotzdem ins FBO. Unter Mesa/Zink funktioniert beides. */
+        _surface = eglCreatePbufferSurface(_display, _config, pbAttr);
+        if (_surface == EGL_NO_SURFACE) {
+            OSG_WARN << "GraphicsWindowEGL: kein Pbuffer (0x"
+                     << std::hex << eglGetError() << std::dec
+                     << "), versuche surfaceless" << std::endl;
+        } else {
+            OSG_WARN << "GraphicsWindowEGL: Pbuffer " << w << "x" << h
+                     << " als Kontextziel" << std::endl;
+        }
 
-        if (!eglMakeCurrent(_display, EGL_NO_SURFACE, EGL_NO_SURFACE, _context)) {
+        if (!eglMakeCurrent(_display, _surface, _surface, _context)) {
             OSG_WARN << "GraphicsWindowEGL: makeCurrent fuer FBO-Setup fehlgeschlagen 0x"
                      << std::hex << eglGetError() << std::dec << std::endl;
             return false;
@@ -262,16 +544,105 @@ public:
         p_GenFramebuffers(1, &_fbo);
         p_BindFramebuffer(GL_FRAMEBUFFER, _fbo);
 
-        p_GenRenderbuffers(1, &_rbColor);
-        p_BindRenderbuffer(GL_RENDERBUFFER, _rbColor);
-        p_RenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, w, h);
-        p_FramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                                  GL_RENDERBUFFER, _rbColor);
+        /* Farbziel als Textur statt Renderbuffer - siehe Kommentar
+           oben zur Tile-Aufloesung. */
+        if (!loadTexEntryPoints()) {
+            OSG_WARN << "GraphicsWindowEGL: Textur-Entrypoints fehlen"
+                     << std::endl;
+            return false;
+        }
+        p_GenTextures(1, &_texColor);
+        p_BindTexture(GL_TEXTURE_2D, _texColor);
+
+        bool shared = false;
+
+        /* Zuerst der Weg ueber einen Puffer, den der Presenter
+           bereitstellt. Der funktioniert unter allen Backends, weil er
+           ohne EGL_EXT_image_dma_buf_import auskommt. */
+        if (tryHybrisBuffer(w, h)) shared = true;
+
+        /* Sonst ein Puffer vom Kernel-Heap. Den kann nur Mesa
+           importieren, also nur unter Zink. */
+        if (!shared) _dmabufFd = allocDmaHeap(size_t(w) * size_t(h) * 4u);
+
+        if (!shared && _dmabufFd >= 0) {
+            PFNEGLCREATEIMAGEKHRPROC CreateImage =
+                (PFNEGLCREATEIMAGEKHRPROC)eglGetProcAddress("eglCreateImageKHR");
+            typedef void (*PFN_ImgTarget)(unsigned, void*);
+            PFN_ImgTarget ImgTarget =
+                (PFN_ImgTarget)eglGetProcAddress("glEGLImageTargetTexture2DOES");
+
+            if (CreateImage && ImgTarget) {
+                const EGLint iattr[] = {
+                    EGL_WIDTH,  w,
+                    EGL_HEIGHT, h,
+                    EGL_LINUX_DRM_FOURCC_EXT, 0x34324241,   /* AB24 */
+                    EGL_DMA_BUF_PLANE0_FD_EXT,     _dmabufFd,
+                    EGL_DMA_BUF_PLANE0_OFFSET_EXT, 0,
+                    EGL_DMA_BUF_PLANE0_PITCH_EXT,  w * 4,
+                    EGL_DMA_BUF_PLANE0_MODIFIER_LO_EXT, 0,  /* LINEAR */
+                    EGL_DMA_BUF_PLANE0_MODIFIER_HI_EXT, 0,
+                    EGL_NONE
+                };
+                _dmabufImage = CreateImage(_display, EGL_NO_CONTEXT,
+                                           EGL_LINUX_DMA_BUF_EXT,
+                                           nullptr, iattr);
+                if (_dmabufImage != EGL_NO_IMAGE_KHR) {
+                    ImgTarget(GL_TEXTURE_2D, _dmabufImage);
+                    shared = true;
+                    OSG_WARN << "GraphicsWindowEGL: Zero-Copy aktiv, dmabuf fd="
+                             << _dmabufFd << " pid=" << getpid()
+                             << " stride=" << (w * 4) << std::endl;
+
+                    const char* sp = ::getenv("FGFS_FD_SOCKET");
+                    if (!sp || !*sp) sp = "/tmp/fgfs-frame.sock";
+                    g_fdServer.start(_dmabufFd, sp);
+                } else {
+                    OSG_WARN << "GraphicsWindowEGL: dmabuf-Import fehlgeschlagen 0x"
+                             << std::hex << eglGetError() << std::dec
+                             << ", falle auf Readback zurueck" << std::endl;
+                }
+            }
+        }
+
+        if (!shared) {
+            /* NICHT schliessen: EGL hat den Deskriptor beim Import
+               moeglicherweise bereits uebernommen, und ein zweites
+               close() trifft dann einen fremden fd - der Mali-Treiber
+               verliert dabei seinen eventfd (EBADF). */
+            _dmabufFd = -1;
+#if defined(OSG_GLES2_AVAILABLE) || defined(OSG_GLES3_AVAILABLE)
+            /* GLES2 kennt kein sized internal format wie GL_RGBA8. */
+            p_TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0,
+                         GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+#else
+            p_TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0,
+                         GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+#endif
+        }
+        p_TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        p_TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        p_TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        p_TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        p_FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                               GL_TEXTURE_2D, _texColor, 0);
 
         p_GenRenderbuffers(1, &_rbDepth);
         p_BindRenderbuffer(GL_RENDERBUFFER, _rbDepth);
+#if defined(OSG_GLES2_AVAILABLE) || defined(OSG_GLES3_AVAILABLE)
+        /* GLES2 kennt kein kombiniertes Depth-Stencil-Format ohne
+           OES_packed_depth_stencil. Nur Tiefe, kein Stencil - das
+           genuegt fuer FlightGears Renderpfad. */
+        p_RenderbufferStorage(GL_RENDERBUFFER, 0x81A5 /* DEPTH_COMPONENT16 */, w, h);
+#else
         p_RenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, w, h);
-        p_FramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
+#endif
+        p_FramebufferRenderbuffer(GL_FRAMEBUFFER,
+#if defined(OSG_GLES2_AVAILABLE) || defined(OSG_GLES3_AVAILABLE)
+                                  0x8D00 /* GL_DEPTH_ATTACHMENT */,
+#else
+                                  GL_DEPTH_STENCIL_ATTACHMENT,
+#endif
                                   GL_RENDERBUFFER, _rbDepth);
 
         {
@@ -284,10 +655,12 @@ public:
             }
         }
 
+
         glViewport(0, 0, w, h);
         setDefaultFboId(_fbo);
-        OSG_NOTICE << "GraphicsWindowEGL: FBO " << _fbo << " angelegt, "
-                   << w << "x" << h << std::endl;
+        OSG_WARN << "GraphicsWindowEGL: FBO " << _fbo
+                 << " mit Textur-Attachment " << _texColor
+                 << ", " << w << "x" << h << std::endl;
 
         if (false) {
             /* Surfaceless-Fallback: EGL_KHR_surfaceless_context ist auf
@@ -295,6 +668,7 @@ public:
             _surface = EGL_NO_SURFACE;
         }
 
+        OSG_WARN << "GraphicsWindowEGL: realize fertig" << std::endl;
         _realized = true;
         return true;
     }
@@ -329,6 +703,10 @@ public:
             return false;
         }
         if (_fbo && p_BindFramebuffer) p_BindFramebuffer(GL_FRAMEBUFFER, _fbo);
+        static int n = 0;
+        if (n < 3) { OSG_WARN << "GraphicsWindowEGL: makeCurrent " << ++n
+                              << " thread=" << (unsigned long)pthread_self()
+                              << std::endl; }
         return true;
     }
 
@@ -359,6 +737,115 @@ public:
         dumpFrameIfRequested();
     }
 
+
+    /* --- Geteilter hybris-Nativpuffer ----------------------------
+     *
+     * Der Presenter legt den Puffer an und haelt seine Beschreibung
+     * auf einem Unix-Socket bereit: drei Ints (stride, Anzahl Ints,
+     * Anzahl Deskriptoren), dann die Ints, die Deskriptoren als
+     * Beipack. Wir stellen den Puffer daraus wieder her.
+     */
+    bool tryHybrisBuffer(int w, int h)
+    {
+        const char* sp = ::getenv("FGFS_HYB_SOCKET");
+        if (!sp || !*sp) return false;
+
+        typedef unsigned (*PFN_Remote)(EGLint, EGLint, EGLint, EGLint,
+                                       EGLint, int, int*, int, int*,
+                                       void**);
+        typedef void* (*PFN_Image)(EGLDisplay, EGLContext, EGLenum,
+                                   void*, const EGLint*);
+        typedef void  (*PFN_Target)(unsigned, void*);
+
+        PFN_Remote Remote = (PFN_Remote)
+            eglGetProcAddress("eglHybrisCreateRemoteBuffer");
+        PFN_Image  Image  = (PFN_Image)
+            eglGetProcAddress("eglCreateImageKHR");
+        PFN_Target Target = (PFN_Target)
+            eglGetProcAddress("glEGLImageTargetTexture2DOES");
+        if (!Remote || !Image || !Target) {
+            OSG_WARN << "GraphicsWindowEGL: hybris-Puffer nicht "
+                        "verfuegbar" << std::endl;
+            return false;
+        }
+
+        int s = ::socket(AF_UNIX, SOCK_STREAM, 0);
+        if (s < 0) return false;
+
+        struct sockaddr_un sa;
+        memset(&sa, 0, sizeof sa);
+        sa.sun_family = AF_UNIX;
+        ::strncpy(sa.sun_path, sp, sizeof(sa.sun_path) - 1);
+        if (::connect(s, (struct sockaddr*)&sa, sizeof sa) < 0) {
+            OSG_WARN << "GraphicsWindowEGL: kein Presenter auf " << sp
+                     << std::endl;
+            ::close(s);
+            return false;
+        }
+
+        int head[3] = { 0, 0, 0 };
+        int ints[128];
+        int fds[16];
+        char cbuf[CMSG_SPACE(16 * sizeof(int))];
+        struct iovec iov[2];
+        struct msghdr msg;
+
+        iov[0].iov_base = head;  iov[0].iov_len = sizeof head;
+        iov[1].iov_base = ints;  iov[1].iov_len = sizeof ints;
+        memset(&msg, 0, sizeof msg);
+        msg.msg_iov = iov;  msg.msg_iovlen = 2;
+        msg.msg_control = cbuf;
+        msg.msg_controllen = sizeof cbuf;
+
+        if (::recvmsg(s, &msg, 0) <= 0) { ::close(s); return false; }
+
+        struct cmsghdr* cm = CMSG_FIRSTHDR(&msg);
+        if (!cm || cm->cmsg_type != SCM_RIGHTS) { ::close(s); return false; }
+
+        const int stride = head[0];
+        const int nints  = head[1];
+        const int nfds   = head[2];
+        if (nints <= 0 || nints > 128 || nfds <= 0 || nfds > 16) {
+            ::close(s); return false;
+        }
+        memcpy(fds, CMSG_DATA(cm), nfds * sizeof(int));
+
+        /* Android-Gralloc: RGBA8888, von GPU beschreibbar, von der
+           CPU lesbar (der Presenter darf notfalls direkt hineinsehen). */
+        const EGLint usage = 0x00000100 | 0x00000200
+                           | 0x00000003 | 0x00000030;
+
+        void* buf = nullptr;
+        if (!Remote(w, h, usage, 1 /* RGBA8888 */, stride,
+                    nints, ints, nfds, fds, &buf) || !buf) {
+            OSG_WARN << "GraphicsWindowEGL: CreateRemoteBuffer "
+                        "fehlgeschlagen" << std::endl;
+            ::close(s);
+            return false;
+        }
+
+        void* img = Image(_display, EGL_NO_CONTEXT,
+                          0x3140 /* EGL_NATIVE_BUFFER_HYBRIS */,
+                          buf, nullptr);
+        if (!img) {
+            OSG_WARN << "GraphicsWindowEGL: EGLImage aus hybris-Puffer "
+                        "fehlgeschlagen 0x" << std::hex << eglGetError()
+                     << std::dec << std::endl;
+            ::close(s);
+            return false;
+        }
+
+        Target(GL_TEXTURE_2D, img);
+
+        _hybSocket = s;          /* offen halten, sonst faellt der
+                                    Puffer beim Presenter weg */
+        _hybShared = true;
+        _hybStride = stride;
+        OSG_WARN << "GraphicsWindowEGL: geteilter hybris-Puffer, "
+                 << w << "x" << h << ", stride=" << stride << std::endl;
+        return true;
+    }
+
     void publishToShm()
     {
         static int enabled = -1;
@@ -376,15 +863,151 @@ public:
             return;
         }
 
-        const int slot = int(_frameCount & 1u);
-        ++_frameCount;
+        /* Der Presenter besitzt den Puffer und hat ihn selbst als
+           Textur - wir melden nur, dass der Frame fertig ist. */
+        if (_hybShared) {
+            glFlush();
+            g_shm.publishDmabuf(getpid(), 0, uint32_t(_hybStride) * 4u,
+                                0x48594252 /* HYBR */);
+            ++_frameCount;
+            return;
+        }
+
+        /* Zero-Copy: die GPU hat bereits in den geteilten Puffer
+           gerendert. Es bleibt nur, den Frame als fertig zu melden. */
+        if (_dmabufFd >= 0) {
+            {
+                static int m = 0;
+                if (m < 3) { OSG_WARN << "GraphicsWindowEGL: publish "
+                                      << ++m << " thread="
+                                      << (unsigned long)pthread_self()
+                                      << std::endl; }
+            }
+            if (!g_shm.ready() && !g_shm.open(w, h)) return;
+
+            /* Statt glFinish - das den Simulator bis zur Fertigstellung
+               saemtlicher GPU-Arbeit anhaelt - ein Fence: die Pipeline
+               laeuft weiter, und der Presenter wartet selbst darauf,
+               bis der Frame vollstaendig ist. */
+#if defined(OSG_GLES2_AVAILABLE) || defined(OSG_GLES3_AVAILABLE)
+            /* GLES2: kein Fence - EGL_ANDROID_native_fence_sync
+               verhaelt sich hier anders, und die Renderschleife
+               bleibt sonst nach wenigen Frames stehen. */
+            _useFence = false;
+#endif
+            if (::getenv("FGFS_NO_SYNC")) _useFence = false;
+            if (_useFence) {
+                if (!_pCreateSync) {
+                    _pCreateSync = (PFN_CreateSyncKHR)
+                        eglGetProcAddress("eglCreateSyncKHR");
+                    _pDupFence = (PFN_DupNativeFence)
+                        eglGetProcAddress("eglDupNativeFenceFDANDROID");
+                    _pDestroySync = (PFN_DestroySyncKHR)
+                        eglGetProcAddress("eglDestroySyncKHR");
+                    if (!_pCreateSync || !_pDupFence || !_pDestroySync) {
+                        OSG_WARN << "GraphicsWindowEGL: kein "
+                                    "native_fence_sync, nutze glFinish"
+                                 << std::endl;
+                        _useFence = false;
+                    }
+                }
+            }
+
+            if (_useFence) {
+                EGLSyncKHR sync = _pCreateSync(
+                    _display, 0x3144 /* EGL_SYNC_NATIVE_FENCE_ANDROID */,
+                    nullptr);
+                glFlush();                 /* Fence in die Queue schieben */
+                if (sync != EGL_NO_SYNC_KHR) {
+                    const int ffd = _pDupFence(_display, sync);
+                    _pDestroySync(_display, sync);
+                    g_fdServer.setFence(ffd);   /* uebernimmt den fd */
+                } else {
+                    glFinish();               /* Notnagel */
+                }
+            } else if (::getenv("FGFS_NO_SYNC")) {
+                /* Ohne jede Synchronisation - die Pipeline laeuft
+                   durch, der Presenter kann ein halbfertiges Bild
+                   sehen. Zum Vergleichsmessen. */
+                glFlush();
+            } else {
+#if defined(OSG_GLES2_AVAILABLE) || defined(OSG_GLES3_AVAILABLE)
+                /* Der Mali-Blob bietet keine Sync-Erweiterungen, und
+                   glFinish haelt die Pipeline bei jedem Frame an.
+                   glFlush schiebt die Arbeit nur an - der Presenter
+                   kann dadurch ein halbfertiges Bild sehen. */
+                glFlush();
+#else
+                glFinish();
+#endif
+            }
+            g_shm.publishDmabuf(getpid(), _dmabufFd, w * 4, 0x34324241);
+            ++_frameCount;
+            return;
+        }
+
+        const size_t bytes = size_t(w) * size_t(h) * 4u;
+
+        /* PBOs beim ersten Aufruf anlegen */
+        if (!_pbo[0]) {
+#if defined(OSG_GLES2_AVAILABLE) || defined(OSG_GLES3_AVAILABLE)
+            if (true) {   /* GLES2 hat keine Pixel-Buffer-Objects */
+#else
+            if (!loadPboEntryPoints()) {
+#endif
+                OSG_WARN << "GraphicsWindowEGL: keine PBO-Unterstuetzung, "
+                            "falle auf blockierenden Readback zurueck"
+                         << std::endl;
+                _pboUnavailable = true;
+            } else {
+                p_GenBuffers(2, _pbo);
+                for (int i = 0; i < 2; ++i) {
+                    p_BindBuffer(GL_PIXEL_PACK_BUFFER, _pbo[i]);
+                    p_BufferData(GL_PIXEL_PACK_BUFFER, long(bytes),
+                                 nullptr, GL_STREAM_READ);
+                }
+                p_BindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+                OSG_NOTICE << "GraphicsWindowEGL: PBO-Readback aktiv ("
+                           << (2 * bytes / 1024) << " KiB)" << std::endl;
+            }
+        }
 
         glPixelStorei(GL_PACK_ALIGNMENT, 1);
 
-        g_shm.beginWrite(slot);
-        glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE,
-                     g_shm.slotPtr(slot));
-        g_shm.endWrite(slot);
+        if (_pboUnavailable) {
+            const int slot = int(_frameCount & 1u);
+            ++_frameCount;
+            g_shm.beginWrite(slot);
+            glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE,
+                         g_shm.slotPtr(slot));
+            g_shm.endWrite(slot);
+            return;
+        }
+
+        const int cur  = int(_frameCount & 1u);
+        const int prev = 1 - cur;
+
+        /* Transfer fuer diesen Frame anstossen - kehrt sofort zurueck,
+           weil das Ziel ein Puffer im GPU-Speicher ist. */
+        p_BindBuffer(GL_PIXEL_PACK_BUFFER, _pbo[cur]);
+        glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+
+        /* Ergebnis des Vorframes abholen. Erst ab dem zweiten Frame,
+           vorher enthaelt der andere Puffer nichts. */
+        if (_frameCount > 0) {
+            p_BindBuffer(GL_PIXEL_PACK_BUFFER, _pbo[prev]);
+            void* src = p_MapBuffer(GL_PIXEL_PACK_BUFFER, GL_READ_ONLY);
+            if (src) {
+                const int slot = int(_frameCount & 1u);
+                g_shm.beginWrite(slot);
+                memcpy(g_shm.slotPtr(slot), src, bytes);
+                g_shm.endWrite(slot);
+                p_UnmapBuffer(GL_PIXEL_PACK_BUFFER);
+            }
+        }
+
+        p_BindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+        ++_frameCount;
     }
 
     void dumpFrameIfRequested()
@@ -463,6 +1086,36 @@ protected:
     ~GraphicsWindowEGL() override { closeImplementation(); }
 
 private:
+    /* Puffer vom Kernel-Heap. Lesezugriff auf das Geraet genuegt,
+       die ioctl braucht kein O_RDWR. */
+    static int allocDmaHeap(size_t len)
+    {
+        const char* dev = ::getenv("FGFS_DMA_HEAP");
+        if (!dev || !*dev) dev = "/dev/dma_heap/system";
+
+        int h = ::open(dev, O_RDWR | O_CLOEXEC);
+        if (h < 0) h = ::open(dev, O_RDONLY | O_CLOEXEC);
+        if (h < 0) {
+            OSG_WARN << "GraphicsWindowEGL: " << dev
+                     << " nicht verfuegbar" << std::endl;
+            return -1;
+        }
+
+        struct dma_heap_allocation_data d;
+        memset(&d, 0, sizeof d);
+        d.len = len;
+        d.fd_flags = O_RDWR | O_CLOEXEC;
+
+        if (::ioctl(h, DMA_HEAP_IOCTL_ALLOC, &d) < 0) {
+            OSG_WARN << "GraphicsWindowEGL: dma-heap alloc fehlgeschlagen"
+                     << std::endl;
+            ::close(h);
+            return -1;
+        }
+        ::close(h);
+        return int(d.fd);
+    }
+
     void init()
     {
         if (_initialized) return;
@@ -484,7 +1137,7 @@ private:
                  << " vendor=" << eglQueryString(_display, EGL_VENDOR) << std::endl;
 
         /* Desktop-GL, nicht GLES - das ist der ganze Sinn des Zink-Stacks. */
-        if (!eglBindAPI(EGL_OPENGL_API)) {
+        if (!eglBindAPI(FGFS_EGL_API)) {
             OSG_WARN << "GraphicsWindowEGL: eglBindAPI(EGL_OPENGL_API) failed"
                      << std::endl;
             return;
@@ -499,7 +1152,7 @@ private:
 
         const EGLint cfgAttr[] = {
             EGL_SURFACE_TYPE,    EGL_WINDOW_BIT,
-            EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT,
+            EGL_RENDERABLE_TYPE, FGFS_EGL_RENDERABLE,
             EGL_RED_SIZE,        red,
             EGL_GREEN_SIZE,      green,
             EGL_BLUE_SIZE,       blue,
@@ -526,7 +1179,7 @@ private:
         /* 3.x reicht: Zink meldet auf Mali-G610 GL 3.2 Compatibility,
            begrenzt durch fehlendes shaderClipDistance. */
         const EGLint ctxAttr[] = {
-            EGL_CONTEXT_MAJOR_VERSION, 3,
+            FGFS_EGL_CTX_ATTR, FGFS_EGL_CTX_VER,
             EGL_NONE
         };
 
@@ -545,7 +1198,24 @@ private:
 
     unsigned _fbo = 0;
     unsigned _rbColor = 0;
+    unsigned _texColor = 0;
+
+    typedef EGLSyncKHR (*PFN_CreateSyncKHR)(EGLDisplay, EGLenum, const EGLint*);
+    typedef EGLint     (*PFN_DupNativeFence)(EGLDisplay, EGLSyncKHR);
+    typedef EGLBoolean (*PFN_DestroySyncKHR)(EGLDisplay, EGLSyncKHR);
+
+    PFN_CreateSyncKHR  _pCreateSync = nullptr;
+    PFN_DupNativeFence _pDupFence = nullptr;
+    PFN_DestroySyncKHR _pDestroySync = nullptr;
+    bool _useFence = true;
+    int  _dmabufFd = -1;
+    bool _hybShared = false;
+    int  _hybSocket = -1;
+    int  _hybStride = 0;
+    EGLImageKHR _dmabufImage = EGL_NO_IMAGE_KHR;
     unsigned _rbDepth = 0;
+    unsigned _pbo[2] = { 0, 0 };
+    bool _pboUnavailable = false;
 
     EGLDisplay _display;
     EGLSurface _surface;
