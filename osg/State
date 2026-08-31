@@ -243,6 +243,19 @@ class OSG_EXPORT State : public Referenced
 
         void applyModelViewAndProjectionUniformsIfRequired();
 
+        /* --- fixed-function emulation for GLES builds (FlightGear port) ---
+           Desktop GLSL 1.20 shaders are rewritten to ES 1.00, and the values
+           of Light/Material/LightModel/Fog/TexMat are uploaded as osg_*
+           uniforms to the current program. */
+        bool convertShaderSourceForGLES(Shader::Type type, std::string& source) const;
+        void setFFPLight(unsigned int num, const Vec4& ambient, const Vec4& diffuse, const Vec4& specular,
+                         const Vec4& eyePosition, const Vec3& eyeSpotDirection, float spotExponent, float spotCutoff,
+                         float constantAttenuation, float linearAttenuation, float quadraticAttenuation);
+        void setFFPMaterial(const Vec4& emission, const Vec4& ambient, const Vec4& diffuse, const Vec4& specular, float shininess);
+        void setFFPLightModelAmbient(const Vec4& ambient);
+        void setFFPFog(int mode, const Vec4& color, float density, float start, float end);
+        void setFFPTextureMatrix(unsigned int unit, const Matrix& matrix);
+
         osg::Uniform* getModelViewMatrixUniform() { return _modelViewMatrixUniform.get(); }
         osg::Uniform* getProjectionMatrixUniform() { return _projectionMatrixUniform.get(); }
         osg::Uniform* getModelViewProjectionMatrixUniform() { return _modelViewProjectionMatrixUniform.get(); }
@@ -1441,6 +1454,19 @@ class OSG_EXPORT State : public Referenced
         Timer_t                      _gpuTick;
         GLuint64                     _gpuTimestamp;
         int                          _timestampBits;
+
+        /* fixed-function emulation (FlightGear GLES port) - appended last so the
+           layout seen by SimGear and FlightGear binaries stays unchanged */
+        ref_ptr<Uniform>            _modelViewMatrixInverseUniform;
+        ref_ptr<Uniform>            _modelViewMatrixTransposeUniform;
+        typedef std::map<std::string, ref_ptr<Uniform> > FFPUniformMap;
+        FFPUniformMap               _ffpUniforms;
+        bool                        _ffpDirty;
+        const Program::PerContextProgram* _ffpLastProgram;
+        Vec4                        _ffpMaterialEmission, _ffpMaterialAmbient, _ffpMaterialDiffuse, _ffpLightModelAmbient;
+        Uniform* ffpUniform(const std::string& name, Uniform::Type type);
+        void initFFPUniforms();
+        void updateFFPSceneColor();
 };
 
 inline void State::pushModeList(ModeMap& modeMap,const StateSet::ModeList& modeList)

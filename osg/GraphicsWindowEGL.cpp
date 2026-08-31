@@ -536,6 +536,13 @@ public:
                      << std::hex << eglGetError() << std::dec << std::endl;
             return false;
         }
+        {
+            const char* v = (const char*)glGetString(GL_VERSION);
+            const char* r = (const char*)glGetString(GL_RENDERER);
+            const char* e = (const char*)glGetString(GL_EXTENSIONS);
+            OSG_WARN << "GraphicsWindowEGL: GL " << (v ? v : "?") << " on " << (r ? r : "?") << std::endl;
+            OSG_WARN << "GraphicsWindowEGL: GL extensions: " << (e ? e : "?") << std::endl;
+        }
         if (!loadFboEntryPoints()) {
             OSG_WARN << "GraphicsWindowEGL: FBO-Einsprungpunkte fehlen" << std::endl;
             return false;
@@ -658,6 +665,25 @@ public:
 
         glViewport(0, 0, w, h);
         setDefaultFboId(_fbo);
+
+        if (_hybShared && ::getenv("FGFS_HYB_PROBE")) {
+            /* Diagnostic, FGFS_HYB_PROBE=1: fill the shared buffer with
+               opaque blue exactly like tools/hybgl.c does, read one pixel
+               back through the FBO, then hold for 4 s so the presenter
+               must report corner = 0xFFFF0000 while we wait. */
+            glClearColor(0.f, 0.f, 1.f, 1.f);
+            glClear(0x00004000 /* GL_COLOR_BUFFER_BIT */);
+            glFinish();
+            unsigned px = 0;
+            glPixelStorei(GL_PACK_ALIGNMENT, 1);
+            glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &px);
+            const unsigned err = glGetError();
+            OSG_WARN << "GraphicsWindowEGL: hybris probe: cleared blue, "
+                        "readback=0x" << std::hex << px
+                     << " glGetError=0x" << err << std::dec
+                     << ", holding 4 s" << std::endl;
+            ::sleep(4);
+        }
         OSG_WARN << "GraphicsWindowEGL: FBO " << _fbo
                  << " mit Textur-Attachment " << _texColor
                  << ", " << w << "x" << h << std::endl;
@@ -733,6 +759,7 @@ public:
         if (_surface != EGL_NO_SURFACE) {
             eglSwapBuffers(_display, _surface);
         }
+        hybrisProbeFrame();
         publishToShm();
         dumpFrameIfRequested();
     }
@@ -835,7 +862,14 @@ public:
             return false;
         }
 
+        for (int guard = 8; guard > 0 && glGetError() != 0; --guard) {}
         Target(GL_TEXTURE_2D, img);
+        {
+            const unsigned err = glGetError();
+            OSG_WARN << "GraphicsWindowEGL: hybris EGLImageTargetTexture2DOES"
+                        " on tex " << _texColor << " glGetError=0x"
+                     << std::hex << err << std::dec << std::endl;
+        }
 
         _hybSocket = s;          /* offen halten, sonst faellt der
                                     Puffer beim Presenter weg */
@@ -844,6 +878,50 @@ public:
         OSG_WARN << "GraphicsWindowEGL: geteilter hybris-Puffer, "
                  << w << "x" << h << ", stride=" << stride << std::endl;
         return true;
+    }
+
+    /* Diagnostic, FGFS_HYB_PROBE=1: what does the GPU think the FBO holds?
+       Logged on frames 1, 10 and every 100th, to be compared with what
+       the presenter reads on the CPU side at the same time. */
+    void hybrisProbeFrame()
+    {
+        static int enabled = -1;
+        if (enabled < 0) {
+            const char* e = ::getenv("FGFS_HYB_PROBE");
+            enabled = (e && *e && *e != '0') ? 1 : 0;
+        }
+        if (!enabled) return;
+        static unsigned long n = 0;
+        ++n;
+        if (n != 1 && n != 10 && (n % 100) != 0) return;
+
+        const int w = _traits.valid() ? _traits->width  : 1024;
+        const int h = _traits.valid() ? _traits->height : 768;
+
+        int boundFbo = -1;
+        glGetIntegerv(0x8CA6 /* GL_FRAMEBUFFER_BINDING */, &boundFbo);
+        int attach = -1;
+        typedef void (*PFN_GetFbAttach)(unsigned, unsigned, unsigned, int*);
+        static PFN_GetFbAttach GetAttach = (PFN_GetFbAttach)
+            eglGetProcAddress("glGetFramebufferAttachmentParameteriv");
+        if (GetAttach)
+            GetAttach(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                      0x8CD1 /* GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME */,
+                      &attach);
+
+        glFinish();
+        unsigned corner = 0, centre = 0;
+        glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &corner);
+        glReadPixels(w / 2, h / 2, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &centre);
+        const unsigned err = glGetError();
+        OSG_WARN << "GraphicsWindowEGL: probe frame " << n
+                 << (_hybShared ? " shared" : " readback")
+                 << " fbo=" << boundFbo << " (ours " << _fbo << ")"
+                 << " attachment=" << attach << " (tex " << _texColor << ")"
+                 << " corner=0x" << std::hex << corner
+                 << " centre=0x" << centre
+                 << " glGetError=0x" << err << std::dec << std::endl;
     }
 
     void publishToShm()
