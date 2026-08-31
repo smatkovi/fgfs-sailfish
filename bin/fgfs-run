@@ -1,0 +1,90 @@
+#!/bin/bash
+# fgfs-run - single entry point for all FlightGear backends on Sailfish OS.
+#
+#   fgfs-run [--backend=zink|gles2|gles3] [--region=LAT,LON[,RADIUS]] [fgfs options...]
+#
+# Picks the library paths and environment for the chosen backend, optionally
+# fetches the scenery for a region first, and execs the matching binary.
+# Without --backend it uses FGFS_BACKEND, or zink, which is the only backend
+# with the PUI menus, the HUD and the canvas displays.
+set -e
+
+BACKEND=${FGFS_BACKEND:-zink}
+REGION=""
+RADIUS=1
+FGROOT=${FGFS_ROOT:-$HOME/.local/share/harbour-fgview/fgdata}
+SCENERY=${FGFS_SCENERY:-$HOME/.fgfs/TerraSync}
+ARGS=()
+
+for arg in "$@"; do
+    case "$arg" in
+        --backend=*) BACKEND="${arg#*=}" ;;
+        --region=*)  REGION="${arg#*=}" ;;
+        --fg-root=*) FGROOT="${arg#*=}"; ARGS+=("$arg") ;;
+        --list-backends)
+            echo "zink   /opt/fgfs         Mesa/Zink, full feature set (menus, HUD, canvas)"
+            echo "gles2  /opt/fgfs-gles    native GLES2, no fixed-function features"
+            echo "gles3  /opt/fgfs-gles3   native GLES3, no fixed-function features"
+            exit 0 ;;
+        *) ARGS+=("$arg") ;;
+    esac
+done
+
+# --- pick up the scenery for a region before starting -----------------------
+if [ -n "$REGION" ]; then
+    LAT=${REGION%%,*}
+    REST=${REGION#*,}
+    LON=${REST%%,*}
+    case "$REST" in *,*) RADIUS=${REST##*,} ;; esac
+    echo "fgfs-run: Szenerie fuer $LAT,$LON (Radius $RADIUS Grad) wird geprueft ..."
+    if [ -x /opt/fgfs/bin/fgfs-scenery ]; then
+        /opt/fgfs/bin/fgfs-scenery --lat "$LAT" --lon "$LON" --radius "$RADIUS" \
+            --target "$SCENERY" --subtrees Terrain,Objects || \
+            echo "fgfs-run: Szenerie-Abgleich fehlgeschlagen, starte mit dem vorhandenen Bestand"
+    else
+        echo "fgfs-run: fgfs-scenery fehlt, ueberspringe den Abgleich" >&2
+    fi
+fi
+[ -d "$SCENERY/Terrain" ] && ARGS+=("--fg-scenery=$SCENERY")
+
+# --- backend specific environment -------------------------------------------
+libdir() {  # the install prefixes are not consistent about lib vs lib64
+    for d in "$1/lib64" "$1/lib"; do [ -d "$d" ] && { echo "$d"; return; }; done
+    echo "$1/lib"
+}
+
+case "$BACKEND" in
+    zink)
+        PREFIX=/opt/fgfs
+        export LD_LIBRARY_PATH="$(libdir /opt/mesa-zink):$(libdir /opt/fgfs)"
+        export __EGL_VENDOR_LIBRARY_DIRS=/opt/mesa-zink/share/glvnd/egl_vendor.d
+        export MESA_LOADER_DRIVER_OVERRIDE=zink
+        # lazy descriptors are worth about 30 percent on the Mali
+        export ZINK_DESCRIPTORS=${ZINK_DESCRIPTORS:-lazy}
+        unset GALLIUM_DRIVER
+        ;;
+    gles2|gles3)
+        [ "$BACKEND" = gles2 ] && { PREFIX=/opt/fgfs-gles; OSGDIR=/opt/osg-gles; } \
+                               || { PREFIX=/opt/fgfs-gles3; OSGDIR=/opt/osg-gles3; }
+        export LD_LIBRARY_PATH="$(libdir $OSGDIR)"
+        export OSG_LIBRARY_PATH="$(libdir $OSGDIR)/osgPlugins-3.6.5"
+        # the device EGL stack has no dma-heap we could import from
+        export FGFS_DMA_HEAP=${FGFS_DMA_HEAP:-/dev/null}
+        ;;
+    *)
+        echo "fgfs-run: unbekanntes Backend '$BACKEND' - siehe --list-backends" >&2
+        exit 2 ;;
+esac
+
+if [ ! -x "$PREFIX/bin/fgfs" ]; then
+    echo "fgfs-run: $PREFIX/bin/fgfs fehlt - ist das Paket fuer '$BACKEND' installiert?" >&2
+    exit 3
+fi
+
+export EGL_PLATFORM=wayland
+export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/display}
+export WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-0}
+export FGFS_SHM=${FGFS_SHM:-1}
+
+echo "fgfs-run: Backend $BACKEND ($PREFIX)"
+exec "$PREFIX/bin/fgfs" --fg-root="$FGROOT" "${ARGS[@]}"

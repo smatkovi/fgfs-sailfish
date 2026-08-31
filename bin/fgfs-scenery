@@ -1,0 +1,338 @@
+#!/usr/bin/env python3
+"""fgsync.py - fetch FlightGear TerraSync scenery for a region with aria2c.
+
+TerraSync serves one .dirindex per directory listing its files and
+subdirectories with SHA1 hashes; aria2c cannot follow that by itself, so this
+script walks the indexes, builds a download list restricted to a bounding box,
+and hands it to aria2c with resume enabled.  Re-running it only fetches what is
+missing or has changed, so an interrupted download continues where it stopped.
+
+  ./fgsync.py --lat 48.11 --lon 16.57 --radius 1 --target ~/.fgfs/TerraSync
+
+Mirrors are discovered from the NAPTR records of terrasync.flightgear.org when
+a resolver is available (systemd-resolved, dig or host); otherwise the built-in
+list below is probed.  Every mirror that answers is kept: index reads fall
+through to the next one when a mirror stops responding, and each download gets
+the file's URL on all of them, so aria2c can switch mirrors on its own.
+--url overrides the discovery and pins a single mirror.
+"""
+
+import argparse
+import hashlib
+import os
+import re
+import shutil
+import subprocess
+import sys
+import urllib.error
+import urllib.request
+
+# Fallbacks for when the NAPTR lookup fails - which is the usual reason for
+# "no DNS entry found for 'terrasync.flightgear.org'" on mobile connections.
+FALLBACK_MIRRORS = [
+    "https://terrasync.eti.pg.gda.pl/ws2",
+    "https://us1mirror.flightgear.org/terrasync/ws2",
+    "https://flightgear.sourceforge.net/scenery",
+]
+
+# Top-level directories worth fetching for flying.  Models holds the shared
+# object models referenced by the .stg files and is not tile-organised.
+DEFAULT_SUBTREES = ["Terrain", "Objects", "Airports", "Models"]
+
+TILE_RE = re.compile(r"^([ew])(\d{3})([ns])(\d{2})$")
+
+
+def log(msg):
+    print(msg, file=sys.stderr, flush=True)
+
+
+# --------------------------------------------------------------- tile naming
+
+def bucket_name(lon, lat):
+    """10x10 degree bucket directory, e.g. e010n40."""
+    blon = int((lon // 10) * 10)
+    blat = int((lat // 10) * 10)
+    return "%s%03d%s%02d" % ("w" if blon < 0 else "e", abs(blon),
+                             "s" if blat < 0 else "n", abs(blat))
+
+
+def tile_name(lon, lat):
+    """1x1 degree tile directory, e.g. e016n48."""
+    tlon = int(lon // 1)
+    tlat = int(lat // 1)
+    return "%s%03d%s%02d" % ("w" if tlon < 0 else "e", abs(tlon),
+                             "s" if tlat < 0 else "n", abs(tlat))
+
+
+def wanted_dirs(left, bottom, right, top):
+    """The bucket and tile directory names covering the bounding box."""
+    buckets, tiles = set(), set()
+    lat = float(bottom)
+    while lat <= top:
+        lon = float(left)
+        while lon <= right:
+            buckets.add(bucket_name(lon, lat))
+            tiles.add(tile_name(lon, lat))
+            lon += 1.0
+        lat += 1.0
+    return buckets, tiles
+
+
+# ------------------------------------------------------------------ mirrors
+
+def naptr_mirrors():
+    """Ask the system resolver for the TerraSync mirror list."""
+    probes = [
+        ["resolvectl", "query", "--type=NAPTR", "terrasync.flightgear.org"],
+        ["systemd-resolve", "--type=NAPTR", "terrasync.flightgear.org"],
+        ["dig", "+short", "NAPTR", "terrasync.flightgear.org"],
+        ["host", "-t", "NAPTR", "terrasync.flightgear.org"],
+    ]
+    found = []
+    for cmd in probes:
+        if not shutil.which(cmd[0]):
+            continue
+        try:
+            out = subprocess.run(cmd, capture_output=True, text=True,
+                                 timeout=20).stdout
+        except Exception:
+            continue
+        for url in re.findall(r'https?://[^\s"\']+', out):
+            url = url.rstrip('".').rstrip("/")
+            if url not in found:
+                found.append(url)
+        if found:
+            log("NAPTR-Spiegel gefunden: %d" % len(found))
+            return found
+    log("keine NAPTR-Antwort - benutze die eingebaute Spiegelliste")
+    return []
+
+
+def fetch(url, timeout=30):
+    req = urllib.request.Request(url, headers={"User-Agent": "fgsync.py"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.read()
+
+
+def pick_mirrors(candidates):
+    """Every mirror that serves a usable root .dirindex, in the order tried."""
+    good = []
+    for base in candidates:
+        if base in good:
+            continue
+        try:
+            data = fetch(base + "/.dirindex", timeout=20)
+        except Exception as exc:
+            log("  %s -> %s" % (base, exc))
+            continue
+        if b"version:" in data or b"d:" in data:
+            log("  %s -> ok" % base)
+            good.append(base)
+        else:
+            log("  %s -> unerwarteter Inhalt" % base)
+    return good
+
+
+def fetch_any(mirrors, rel, timeout=30):
+    """Read rel from the first mirror that answers.  A failing mirror moves to
+    the back of the list, so the next call does not wait on it again."""
+    last = None
+    for _ in range(len(mirrors)):
+        base = mirrors[0]
+        try:
+            return fetch("%s/%s" % (base, rel), timeout=timeout)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                raise                       # genuinely absent, not a mirror fault
+            last = exc
+        except Exception as exc:
+            last = exc
+        if len(mirrors) > 1:
+            log("  Spiegel %s antwortet nicht (%s), wechsle" % (base, last))
+            mirrors.append(mirrors.pop(0))
+    raise last if last is not None else RuntimeError("kein Spiegel erreichbar")
+
+
+# ----------------------------------------------------------------- dirindex
+
+def parse_dirindex(data):
+    """Return (dirs, files) from a .dirindex.
+
+    Lines are colon separated: 'd:<name>:<sha1>' for subdirectories,
+    'f:<name>:<sha1>[:<size>]' for files; 'version:', 'path:' and 't:' are
+    metadata.  Unknown line types are ignored so a format extension does not
+    break the walk.
+    """
+    dirs, files = [], []
+    for raw in data.decode("utf-8", "replace").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split(":")
+        if parts[0] == "d" and len(parts) >= 3:
+            dirs.append((parts[1], parts[2]))
+        elif parts[0] == "f" and len(parts) >= 3:
+            size = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else None
+            files.append((parts[1], parts[2], size))
+    return dirs, files
+
+
+def sha1_of(path):
+    h = hashlib.sha1()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def keep_dir(name, depth, subtree, buckets, tiles):
+    """Restrict the walk to the requested region.
+
+    Only Terrain/Objects are tile organised: depth 1 is the 10x10 bucket,
+    depth 2 the 1x1 tile.  Airports and Models are not filtered by position.
+    """
+    if subtree not in ("Terrain", "Objects"):
+        return True
+    if depth == 1:
+        return name in buckets
+    if depth == 2:
+        return name in tiles
+    return True
+
+
+def walk(mirrors, target, subtree, buckets, tiles, want, stats, path=None, depth=0):
+    """Recursively read .dirindex files and collect what needs downloading."""
+    rel = subtree if path is None else path
+    local_dir = os.path.join(target, *rel.split("/"))
+    try:
+        data = fetch_any(mirrors, "%s/.dirindex" % rel)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return
+        log("  %s: %s" % (rel, exc))
+        return
+    except Exception as exc:
+        log("  %s: %s" % (rel, exc))
+        return
+
+    stats["indexes"] += 1
+    if stats["indexes"] % 25 == 0:
+        log("  %d Indizes gelesen, %d Dateien vorgemerkt" % (stats["indexes"], len(want)))
+
+    os.makedirs(local_dir, exist_ok=True)
+    index_path = os.path.join(local_dir, ".dirindex")
+    with open(index_path, "wb") as fh:
+        fh.write(data)
+
+    dirs, files = parse_dirindex(data)
+    for name, sha, size in files:
+        dest = os.path.join(local_dir, name)
+        if os.path.exists(dest):
+            try:
+                if sha1_of(dest) == sha:
+                    stats["current"] += 1
+                    continue
+            except OSError:
+                pass
+        want.append(([("%s/%s/%s" % (m, rel, name)) for m in mirrors], local_dir, name))
+
+    for name, sha in dirs:
+        if not keep_dir(name, depth + 1, subtree, buckets, tiles):
+            continue
+        walk(mirrors, target, subtree, buckets, tiles, want, stats,
+             "%s/%s" % (rel, name), depth + 1)
+
+
+# --------------------------------------------------------------------- main
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--target", default=os.path.expanduser("~/.fgfs/TerraSync"),
+                    help="scenery directory (default: ~/.fgfs/TerraSync)")
+    ap.add_argument("--lat", type=float, help="centre latitude")
+    ap.add_argument("--lon", type=float, help="centre longitude")
+    ap.add_argument("--radius", type=float, default=1.0,
+                    help="degrees around the centre (default: 1)")
+    ap.add_argument("--left", type=float, help="bounding box west edge")
+    ap.add_argument("--right", type=float, help="bounding box east edge")
+    ap.add_argument("--bottom", type=float, help="bounding box south edge")
+    ap.add_argument("--top", type=float, help="bounding box north edge")
+    ap.add_argument("--url", help="scenery root URL, skips mirror discovery")
+    ap.add_argument("--subtrees", default=",".join(DEFAULT_SUBTREES),
+                    help="comma separated top level directories")
+    ap.add_argument("--connections", type=int, default=4,
+                    help="aria2c connections per server (default: 4)")
+    ap.add_argument("--concurrent", type=int, default=8,
+                    help="aria2c parallel downloads (default: 8)")
+    ap.add_argument("--list-only", action="store_true",
+                    help="only write the aria2c input file, do not download")
+    args = ap.parse_args()
+
+    if args.lat is not None and args.lon is not None:
+        left, right = args.lon - args.radius, args.lon + args.radius
+        bottom, top = args.lat - args.radius, args.lat + args.radius
+    elif None not in (args.left, args.right, args.bottom, args.top):
+        left, right, bottom, top = args.left, args.right, args.bottom, args.top
+    else:
+        ap.error("either --lat/--lon or --left/--right/--bottom/--top")
+
+    buckets, tiles = wanted_dirs(left, bottom, right, top)
+    log("Region %.2f..%.2f x %.2f..%.2f -> %d Kacheln in %d Buckets"
+        % (left, right, bottom, top, len(tiles), len(buckets)))
+    log("Kacheln: %s" % " ".join(sorted(tiles)))
+
+    if args.url:
+        mirrors = [args.url.rstrip("/")]
+    else:
+        mirrors = pick_mirrors(naptr_mirrors() + FALLBACK_MIRRORS)
+    if not mirrors:
+        log("kein erreichbarer Spiegel - mit --url einen angeben")
+        return 2
+    log("Spiegel (%d): %s" % (len(mirrors), ", ".join(mirrors)))
+
+    os.makedirs(args.target, exist_ok=True)
+    want = []
+    stats = {"indexes": 0, "current": 0}
+    for subtree in [s.strip() for s in args.subtrees.split(",") if s.strip()]:
+        log("Durchsuche %s ..." % subtree)
+        walk(mirrors, args.target, subtree, buckets, tiles, want, stats)
+
+    log("%d Indizes, %d Dateien aktuell, %d zu laden"
+        % (stats["indexes"], stats["current"], len(want)))
+    if not want:
+        log("nichts zu tun")
+        return 0
+
+    list_path = os.path.join(args.target, "fgsync-aria2.txt")
+    with open(list_path, "w") as fh:
+        for urls, local_dir, name in want:
+            # aria2 takes several URIs for one file on a single tab separated
+            # line and falls through to the next when one of them fails.
+            fh.write("%s\n  dir=%s\n  out=%s\n" % ("\t".join(urls), local_dir, name))
+    log("Liste: %s" % list_path)
+
+    if args.list_only:
+        return 0
+    if not shutil.which("aria2c"):
+        log("aria2c nicht gefunden - Liste steht bereit, mit -i abarbeiten")
+        return 3
+
+    cmd = ["aria2c", "-i", list_path,
+           "--continue=true",                  # resume partial files
+           "--auto-file-renaming=false",       # overwrite, never write .1 copies
+           "--allow-overwrite=true",
+           "--max-connection-per-server=%d" % args.connections,
+           "--max-concurrent-downloads=%d" % args.concurrent,
+           "--split=%d" % args.connections,
+           "--retry-wait=5", "--max-tries=5", "--timeout=30",
+           "--connect-timeout=15",
+           # spread the connections for one file over the mirrors we found
+           "--min-split-size=1M",
+           "--summary-interval=10", "--console-log-level=warn"]
+    log("aria2c startet ...")
+    return subprocess.call(cmd)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

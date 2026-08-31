@@ -6,7 +6,7 @@
 Name:       fgfs-sailfish
 Summary:    FlightGear flight simulator runtime for Sailfish OS
 Version:    2020.3.19
-Release:    1
+Release:    2
 License:    GPLv2+
 Group:      Amusements/Games
 URL:        https://github.com/smatkovi/fgfs-sailfish
@@ -58,6 +58,12 @@ exec /opt/fgfs/bin/fgfs "$@"
 ENVEOF
 chmod 0755 %{buildroot}/opt/fgfs/bin/fgfs-env
 
+# One entry point for all three backends, plus the scenery downloader it
+# calls when a region is requested.  Both live in the zink package because
+# it is the one every installation has.
+install -m 0755 %{_sourcedir}/fgfs-run %{buildroot}/opt/fgfs/bin/fgfs-run
+install -m 0755 %{_sourcedir}/fgfs-scenery %{buildroot}/opt/fgfs/bin/fgfs-scenery
+
 mkdir -p %{buildroot}/opt/fgfs/share
 cat > %{buildroot}/opt/fgfs/share/fgtouch.xml <<'PROTOEOF'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -84,5 +90,17 @@ PROTOEOF
 /opt/mesa-zink
 
 %changelog
+* Sun Aug 31 2026 Sebastian <smatkovi@github> - 2020.3.19-2
+- fgfs-run: one entry point for the zink, gles2 and gles3 backends, each
+  with its own library paths and environment; ZINK_DESCRIPTORS=lazy is the
+  default for zink
+- fgfs-run --region=LAT,LON[,RADIUS] fetches the scenery for that area
+  before starting
+- fgfs-scenery: TerraSync download for a region, walking the .dirindex
+  files and handing the file list to aria2c, resumable and re-runnable
+  (existing files are checked against their SHA1)
+- SimGear: gz read errors no longer take the process down with them; the
+  error path built a std::string from a null pointer while reporting
+
 * Mon Aug 24 2026 Sebastian <smatkovi@github> - 2020.3.19-1
 - Erste Fassung: FlightGear, OSG, SimGear, PLIB, Mesa-Zink, glvnd

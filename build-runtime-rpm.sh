@@ -30,6 +30,10 @@ sb2 -t $TARGET -m sdk-install -R tar czf /home/mersdk/$NAME/SOURCES/$NAME-$VERSI
 
 ls -lh "$WORK/SOURCES/$NAME-$VERSION.tar.gz"
 
+echo "== Starter und Szenerie-Werkzeug in die Quellen legen"
+cp "$(dirname "$0")/bin/fgfs-run" "$(dirname "$0")/bin/fgfs-scenery" "$WORK/SOURCES/"
+chmod 0755 "$WORK/SOURCES/fgfs-run" "$WORK/SOURCES/fgfs-scenery"
+
 echo "== Spec schreiben"
 cat > "$WORK/rpm/$NAME.spec" <<'SPEC'
 %global __requires_exclude ^libOpenGL\\.so|^libEGL_mesa\\.so|^libGLdispatch\\.so|^libgallium
@@ -40,7 +44,7 @@ cat > "$WORK/rpm/$NAME.spec" <<'SPEC'
 Name:       fgfs-sailfish
 Summary:    FlightGear flight simulator runtime for Sailfish OS
 Version:    2020.3.19
-Release:    1
+Release:    2
 License:    GPLv2+
 Group:      Amusements/Games
 URL:        https://github.com/smatkovi/fgfs-sailfish
@@ -91,6 +95,9 @@ unset GALLIUM_DRIVER
 exec /opt/fgfs/bin/fgfs "$@"
 ENVEOF
 chmod 0755 %{buildroot}/opt/fgfs/bin/fgfs-env
+
+install -m 0755 %{_sourcedir}/fgfs-run %{buildroot}/opt/fgfs/bin/fgfs-run
+install -m 0755 %{_sourcedir}/fgfs-scenery %{buildroot}/opt/fgfs/bin/fgfs-scenery
 
 %files
 %defattr(-,root,root,-)
