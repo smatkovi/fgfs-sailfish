@@ -59,9 +59,7 @@ build_one() {
     ls -lh "$work/SOURCES/$name-$version.tar.gz"
 
     echo "== Starter und Szenerie-Werkzeug in die Quellen legen"
-    # mb2 looks for Source1/Source2 next to the spec, in rpm/, not in SOURCES/
     install -m 0755 "$REPO/bin/fgfs-run" "$REPO/bin/fgfs-scenery" "$work/SOURCES/"
-    install -m 0755 "$REPO/bin/fgfs-run" "$REPO/bin/fgfs-scenery" "$work/rpm/"
 
     echo "== Spec aus dem Repository uebernehmen"
     cp "$spec" "$work/rpm/$name.spec"
@@ -69,18 +67,13 @@ build_one() {
     echo "== RPM bauen"
     cd "$work"
     tar xzf "SOURCES/$name-$version.tar.gz" -C . 2>/dev/null || true
-    # mb2 runs a test-suite and prune step after the build; both fail here
-    # (no test suites, no source package) long after the RPM is written, so
-    # the exit status is not a verdict on the build.  Judge by the artefact.
-    mb2 -t $TARGET build || true
-    if ! ls "$work"/RPMS/*.rpm >/dev/null 2>&1; then
+    mb2 -t $TARGET build || {
         echo
-        echo "Kein RPM entstanden. Haeufigste Ursachen:"
+        echo "mb2 hat einen Fehler gemeldet. Haeufigste Ursachen:"
         echo "  - Quelltarball muss unter SOURCES/ liegen"
-        echo "  - Source1/Source2 muessen neben der Spec in rpm/ liegen"
         echo "  - AutoReqProv: no noetig, weil die Bibliotheken aus /opt kommen"
         exit 1
-    fi
+    }
     ls -lh "$work"/RPMS/*.rpm
 }
 
