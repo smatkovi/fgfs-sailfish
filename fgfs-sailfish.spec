@@ -13,10 +13,6 @@ URL:        https://github.com/smatkovi/fgfs-sailfish
 Source0:    %{name}-%{version}.tar.gz
 Source1:    fgfs-run
 Source2:    fgfs-scenery
-Source1:    fgfs-run
-Source2:    fgfs-scenery
-Source1:    fgfs-run
-Source2:    fgfs-scenery
 BuildArch:  aarch64
 AutoReqProv: no
 
