@@ -11,6 +11,8 @@ License:    GPLv2+
 Group:      Amusements/Games
 URL:        https://github.com/smatkovi/fgfs-sailfish
 Source0:    %{name}-%{version}.tar.gz
+Source1:    fgfs-run
+Source2:    fgfs-scenery
 BuildArch:  aarch64
 AutoReqProv: no
 
@@ -61,8 +63,8 @@ chmod 0755 %{buildroot}/opt/fgfs/bin/fgfs-env
 # One entry point for all three backends, plus the scenery downloader it
 # calls when a region is requested.  Both live in the zink package because
 # it is the one every installation has.
-install -m 0755 %{_sourcedir}/fgfs-run %{buildroot}/opt/fgfs/bin/fgfs-run
-install -m 0755 %{_sourcedir}/fgfs-scenery %{buildroot}/opt/fgfs/bin/fgfs-scenery
+install -m 0755 %{SOURCE1} %{buildroot}/opt/fgfs/bin/fgfs-run
+install -m 0755 %{SOURCE2} %{buildroot}/opt/fgfs/bin/fgfs-scenery
 
 mkdir -p %{buildroot}/opt/fgfs/share
 cat > %{buildroot}/opt/fgfs/share/fgtouch.xml <<'PROTOEOF'
@@ -90,7 +92,7 @@ PROTOEOF
 /opt/mesa-zink
 
 %changelog
-* Sun Aug 31 2026 Sebastian <smatkovi@github> - 2020.3.19-2
+* Mon Aug 31 2026 Sebastian <smatkovi@github> - 2020.3.19-2
 - fgfs-run: one entry point for the zink, gles2 and gles3 backends, each
   with its own library paths and environment; ZINK_DESCRIPTORS=lazy is the
   default for zink

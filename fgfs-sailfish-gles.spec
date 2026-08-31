@@ -41,7 +41,7 @@ cp -a opt %{buildroot}/
 /opt/fgfs-gles3
 
 %changelog
-* Sun Aug 31 2026 Sebastian <smatkovi@github> - 2020.3.19-3
+* Mon Aug 31 2026 Sebastian <smatkovi@github> - 2020.3.19-3
 - OSG: desktop GLSL 1.20 effect shaders are rewritten to GLSL ES on load,
   including the fixed-function built-ins (gl_LightSource, gl_Fog,
   gl_FrontMaterial, gl_TexCoord); Light, Material, LightModel, Fog and
