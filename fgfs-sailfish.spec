@@ -84,25 +84,6 @@ install -m 0755 %{SOURCE2} %{buildroot}/opt/fgfs/bin/fgfs-scenery
 mkdir -p %{buildroot}/opt/fgfs/share
 install -m 0644 %{SOURCE3} %{buildroot}/opt/fgfs/share/fgtouch.xml
 
-mkdir -p %{buildroot}/opt/fgfs/share
-cat > %{buildroot}/opt/fgfs/share/fgtouch.xml <<'PROTOEOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<PropertyList>
-  <generic>
-    <input>
-      <line_separator>newline</line_separator>
-      <var_separator>,</var_separator>
-      <chunk><name>aileron</name><node>/controls/flight/aileron</node><type>float</type></chunk>
-      <chunk><name>elevator</name><node>/controls/flight/elevator</node><type>float</type></chunk>
-      <chunk><name>rudder</name><node>/controls/flight/rudder</node><type>float</type></chunk>
-      <chunk><name>throttle</name><node>/controls/engines/engine[0]/throttle</node><type>float</type></chunk>
-      <chunk><name>brake</name><node>/controls/gear/brake-parking</node><type>float</type></chunk>
-      <chunk><name>flaps</name><node>/controls/flight/flaps</node><type>float</type></chunk>
-      <chunk><name>gear</name><node>/controls/gear/gear-down</node><type>bool</type></chunk>
-    </input>
-  </generic>
-</PropertyList>
-PROTOEOF
 
 %files
 %defattr(-,root,root,-)
@@ -112,7 +93,8 @@ PROTOEOF
 %changelog
 * Thu Sep 03 2026 Sebastian <smatkovi@github> - 2020.3.19-5
 - fgtouch.xml ships from the repository; eighth field sends the throttle
-  to current-engine as well, which the cockpit lever's animation reads
+  to current-engine as well, which the cockpit lever's animation reads.
+  The inline copy that used to overwrite it in %install is gone
 
 * Thu Sep 03 2026 Sebastian <smatkovi@github> - 2020.3.19-4
 - fgfs-run: flight model at 60 Hz for the GLES backends, FGFS_MODEL_HZ
