@@ -243,6 +243,11 @@ class OSG_EXPORT State : public Referenced
 
         void applyModelViewAndProjectionUniformsIfRequired();
 
+        /* FlightGear GLES port: counters for FGFS_GLES_TIMING=1.  Public and
+           unconditional so the header stays the same in both profiles. */
+        mutable unsigned long _fgfsNumAttribs, _fgfsNumModes, _fgfsNumDrawables;
+
+#if !defined(OSG_GL_FIXED_FUNCTION_AVAILABLE)
         /* --- fixed-function emulation for GLES builds (FlightGear port) ---
            Desktop GLSL 1.20 shaders are rewritten to ES 1.00, and the values
            of Light/Material/LightModel/Fog/TexMat are uploaded as osg_*
@@ -255,6 +260,7 @@ class OSG_EXPORT State : public Referenced
         void setFFPLightModelAmbient(const Vec4& ambient);
         void setFFPFog(int mode, const Vec4& color, float density, float start, float end);
         void setFFPTextureMatrix(unsigned int unit, const Matrix& matrix);
+#endif
 
         osg::Uniform* getModelViewMatrixUniform() { return _modelViewMatrixUniform.get(); }
         osg::Uniform* getProjectionMatrixUniform() { return _projectionMatrixUniform.get(); }
@@ -1153,10 +1159,29 @@ class OSG_EXPORT State : public Referenced
           *         an error, it just means that the mode was already set to the
           *         same value as the \c enabled parameter.
         */
-        inline bool applyMode(StateAttribute::GLMode mode,bool enabled,ModeStack& ms)
+#if !defined(OSG_GL_FIXED_FUNCTION_AVAILABLE)
+        /* FlightGear GLES port, FGFS_GLES_LEAN=1: these modes do not exist
+           under ES.  Setting them raises INVALID_ENUM and changes nothing,
+           but each attempt costs a driver round trip through the error check. */
+        static inline bool fgfsDeadMode(StateAttribute::GLMode mode)
         {
-            if (ms.valid && ms.last_applied_value != enabled)
-            {
+            static const int fat = (::getenv("FGFS_GLES_FAT") != 0) ? 1 : 0;
+            if (fat) return false;
+            return mode == 0x8643      /* GL_VERTEX_PROGRAM_TWO_SIDE */
+                || mode == 0x8642      /* GL_VERTEX_PROGRAM_POINT_SIZE */
+                || mode == 0x0DE1      /* GL_TEXTURE_2D */
+                || mode == 0x4001;     /* GL_COLOR_LOGIC_OP */
+        }
+#endif
+
+         inline bool applyMode(StateAttribute::GLMode mode,bool enabled,ModeStack& ms)
+         {
+#if !defined(OSG_GL_FIXED_FUNCTION_AVAILABLE)
+             if (fgfsDeadMode(mode)) { ms.last_applied_value = enabled; return false; }
+#endif
+             if (ms.valid && ms.last_applied_value != enabled)
+             {
+                ++_fgfsNumModes;
                 ms.last_applied_value = enabled;
 
 #if defined(OSG_GLES2_AVAILABLE) || defined(OSG_GLES3_AVAILABLE)
@@ -1203,6 +1228,9 @@ class OSG_EXPORT State : public Referenced
 
         inline bool applyModeOnTexUnit(unsigned int unit,StateAttribute::GLMode mode,bool enabled,ModeStack& ms)
         {
+#if !defined(OSG_GL_FIXED_FUNCTION_AVAILABLE)
+            if (fgfsDeadMode(mode)) { ms.last_applied_value = enabled; return false; }
+#endif
             if (ms.valid && ms.last_applied_value != enabled)
             {
                 if (setActiveTextureUnit(unit))
@@ -1230,6 +1258,7 @@ class OSG_EXPORT State : public Referenced
             {
                 if (!as.global_default_attribute.valid()) as.global_default_attribute = attribute->cloneType()->asStateAttribute();
 
+                ++_fgfsNumAttribs;
                 as.last_applied_attribute = attribute;
                 attribute->apply(*this);
 
@@ -1455,6 +1484,7 @@ class OSG_EXPORT State : public Referenced
         GLuint64                     _gpuTimestamp;
         int                          _timestampBits;
 
+#if !defined(OSG_GL_FIXED_FUNCTION_AVAILABLE)
         /* fixed-function emulation (FlightGear GLES port) - appended last so the
            layout seen by SimGear and FlightGear binaries stays unchanged */
         ref_ptr<Uniform>            _modelViewMatrixInverseUniform;
@@ -1467,6 +1497,7 @@ class OSG_EXPORT State : public Referenced
         Uniform* ffpUniform(const std::string& name, Uniform::Type type);
         void initFFPUniforms();
         void updateFFPSceneColor();
+#endif
 };
 
 inline void State::pushModeList(ModeMap& modeMap,const StateSet::ModeList& modeList)

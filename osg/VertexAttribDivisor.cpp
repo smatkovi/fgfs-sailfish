@@ -39,9 +39,11 @@ void VertexAttribDivisor::apply(State& state) const
     if (extensions->glVertexAttribDivisor)
     {
         extensions->glVertexAttribDivisor( _index, _divisor );
+#if !defined(OSG_GL_FIXED_FUNCTION_AVAILABLE)
         {
             static int logged = 0;   /* FlightGear GLES port */
             if (logged < 24) { ++logged; OSG_WARN << "VertexAttribDivisor::apply index=" << _index << " divisor=" << _divisor << std::endl; }
         }
+#endif
     }
 }

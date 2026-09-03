@@ -119,12 +119,14 @@ namespace {
     typedef void  (*PFN_v_uu2)(unsigned, unsigned);
     typedef void  (*PFN_v_uxpu)(unsigned, long, const void*, unsigned);
     typedef void* (*PFN_p_uu)(unsigned, unsigned);
+    typedef void* (*PFN_p_ullu)(unsigned, long, long, unsigned);   /* glMapBufferRange */
     typedef unsigned char (*PFN_b_u)(unsigned);
 
     PFN_v_ip2   p_GenBuffers = nullptr;
     PFN_v_uu2   p_BindBuffer = nullptr;
     PFN_v_uxpu  p_BufferData = nullptr;
     PFN_p_uu    p_MapBuffer = nullptr;
+    PFN_p_ullu  p_MapBufferRange = nullptr;   /* ES 3: the readable mapping */
     PFN_b_u     p_UnmapBuffer = nullptr;
     PFN_v_icp   p_DeleteBuffers = nullptr;
 
@@ -161,10 +163,12 @@ namespace {
         p_BindBuffer    = (PFN_v_uu2) eglGetProcAddress("glBindBuffer");
         p_BufferData    = (PFN_v_uxpu)eglGetProcAddress("glBufferData");
         p_MapBuffer     = (PFN_p_uu)  eglGetProcAddress("glMapBuffer");
+        p_MapBufferRange= (PFN_p_ullu)eglGetProcAddress("glMapBufferRange");
         p_UnmapBuffer   = (PFN_b_u)   eglGetProcAddress("glUnmapBuffer");
         p_DeleteBuffers = (PFN_v_icp) eglGetProcAddress("glDeleteBuffers");
+        /* ES 3 has no readable glMapBuffer; glMapBufferRange does the job. */
         return p_GenBuffers && p_BindBuffer && p_BufferData
-            && p_MapBuffer && p_UnmapBuffer;
+            && (p_MapBuffer || p_MapBufferRange) && p_UnmapBuffer;
     }
 
     bool loadFboEntryPoints()
@@ -461,7 +465,14 @@ FdServer g_fdServer;
 #  define FGFS_EGL_API        EGL_OPENGL_ES_API
 #  define FGFS_EGL_RENDERABLE EGL_OPENGL_ES2_BIT
 #  define FGFS_EGL_CTX_ATTR   EGL_CONTEXT_CLIENT_VERSION
-#  define FGFS_EGL_CTX_VER    2
+/* FGFS_GL_CONTEXT=3 asks for an ES 3 context.  The Mali driver reports 3.2
+   for an ES 2 context as well, but asking lets it choose its ES 3 paths. */
+static int fgfsEglCtxVer()
+{
+    const char* e = ::getenv("FGFS_GL_CONTEXT");
+    return (e && *e == '3') ? 3 : 2;
+}
+#  define FGFS_EGL_CTX_VER    fgfsEglCtxVer()
 #else
 #  define FGFS_EGL_API        EGL_OPENGL_API
 #  define FGFS_EGL_RENDERABLE EGL_OPENGL_BIT
@@ -693,6 +704,13 @@ public:
                diesem Stack vorhanden, dann rendert OSG direkt in ein FBO. */
             _surface = EGL_NO_SURFACE;
         }
+
+        /* Hand the context back.  A context can be current on one thread
+           only, and in OSG's threaded modes it is the draw thread, not this
+           one, that renders: leaving it bound here made the draw thread's
+           eglMakeCurrent fail with EGL_BAD_ACCESS and the GL function table
+           come up empty.  The viewer binds it again where it is needed. */
+        eglMakeCurrent(_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
 
         OSG_WARN << "GraphicsWindowEGL: realize fertig" << std::endl;
         _realized = true;
@@ -1028,11 +1046,10 @@ public:
 
         /* PBOs beim ersten Aufruf anlegen */
         if (!_pbo[0]) {
-#if defined(OSG_GLES2_AVAILABLE) || defined(OSG_GLES3_AVAILABLE)
-            if (true) {   /* GLES2 hat keine Pixel-Buffer-Objects */
-#else
-            if (!loadPboEntryPoints()) {
-#endif
+            /* ES 3 has pixel buffer objects (ES 2 has not); the entry
+               points decide, not the profile.  FGFS_NO_PBO=1 forces the
+               blocking path for comparison. */
+            if (::getenv("FGFS_NO_PBO") || !loadPboEntryPoints()) {
                 OSG_WARN << "GraphicsWindowEGL: keine PBO-Unterstuetzung, "
                             "falle auf blockierenden Readback zurueck"
                          << std::endl;
@@ -1074,7 +1091,10 @@ public:
            vorher enthaelt der andere Puffer nichts. */
         if (_frameCount > 0) {
             p_BindBuffer(GL_PIXEL_PACK_BUFFER, _pbo[prev]);
-            void* src = p_MapBuffer(GL_PIXEL_PACK_BUFFER, GL_READ_ONLY);
+            void* src = p_MapBufferRange
+                ? p_MapBufferRange(GL_PIXEL_PACK_BUFFER, 0, long(bytes),
+                                   0x0001 /* GL_MAP_READ_BIT */)
+                : p_MapBuffer(GL_PIXEL_PACK_BUFFER, GL_READ_ONLY);
             if (src) {
                 const int slot = int(_frameCount & 1u);
                 g_shm.beginWrite(slot);

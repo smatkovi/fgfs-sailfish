@@ -276,9 +276,11 @@ class OSG_EXPORT Program : public osg::StateAttribute
                 void requestLink();
                 virtual void linkProgram(osg::State& state);
 
+#if !defined(OSG_GL_FIXED_FUNCTION_AVAILABLE)
                 /** GLES allows a single shader object per stage (FlightGear port):
                   * merge same-stage shaders of the Program into one and compile them. */
                 void mergeShadersForGLES(osg::State& state);
+#endif
                 virtual bool validateProgram();
                 bool needsLink() const {return _needsLink;}
                 bool isLinked() const {return _isLinked;}
@@ -391,7 +393,9 @@ class OSG_EXPORT Program : public osg::StateAttribute
                 typedef std::vector< ref_ptr<Shader> > ShaderList;
                 ShaderList _shadersToDetach;
                 ShaderList _shadersToAttach;
+#if !defined(OSG_GL_FIXED_FUNCTION_AVAILABLE)
                 ShaderList _mergedShaders;   /* FlightGear GLES port, see mergeShadersForGLES() */
+#endif
 
             private:
                 PerContextProgram();        // disallowed

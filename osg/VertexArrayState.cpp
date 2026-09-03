@@ -445,6 +445,7 @@ struct TexCoordArrayDispatch : public VertexArrayState::ArrayDispatch
 //  VertexAttribArrayDispatch
 //
 
+#if !defined(OSG_GL_FIXED_FUNCTION_AVAILABLE)
 /* FlightGear GLES port: OSG_GLES_DEBUG_AFTER=<seconds> - only log once the
    scene is up, so the probes are not used up by the splash screen. */
 static bool osg_gles_debug_now()
@@ -458,6 +459,7 @@ static bool osg_gles_debug_now()
     }
     return osg::Timer::instance()->delta_s(start, osg::Timer::instance()->tick()) >= after;
 }
+#endif
 
 struct VertexAttribArrayDispatch : public VertexArrayState::ArrayDispatch
 {
@@ -705,10 +707,14 @@ void VertexArrayState::assignFogCoordArrayDispatcher()
 
 void VertexArrayState::assignTexCoordArrayDispatcher(unsigned int numUnits)
 {
+#if defined(OSG_GL_FIXED_FUNCTION_AVAILABLE)
+    _texCoordArrays.resize(numUnits);
+#else
     /* FlightGear GLES port: only ever grow.  Shrinking would leave the
        drawable's higher units without a dispatcher, and setTexCoordArray()
        indexes this vector unchecked. */
     if (numUnits > _texCoordArrays.size()) _texCoordArrays.resize(numUnits);
+#endif
 
     for(unsigned int i=0; i<_texCoordArrays.size(); ++i)
     {
@@ -731,8 +737,12 @@ void VertexArrayState::assignTexCoordArrayDispatcher(unsigned int numUnits)
 
 void VertexArrayState::assignVertexAttribArrayDispatcher(unsigned int numUnits)
 {
+#if defined(OSG_GL_FIXED_FUNCTION_AVAILABLE)
+    _vertexAttribArrays.resize(numUnits);
+#else
     /* FlightGear GLES port: grow only, see assignTexCoordArrayDispatcher(). */
     if (numUnits > _vertexAttribArrays.size()) _vertexAttribArrays.resize(numUnits);
+#endif
 
     for(unsigned int i=0; i<_vertexAttribArrays.size(); ++i)
     {

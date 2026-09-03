@@ -691,6 +691,7 @@ void Program::PerContextProgram::requestLink()
 }
 
 
+#if !defined(OSG_GL_FIXED_FUNCTION_AVAILABLE)
 void Program::PerContextProgram::mergeShadersForGLES(osg::State& state)
 {
     _mergedShaders.clear();
@@ -728,6 +729,7 @@ void Program::PerContextProgram::mergeShadersForGLES(osg::State& state)
         (*it)->compileShader(state);
 }
 
+#endif
 void Program::PerContextProgram::linkProgram(osg::State& state)
 {
     if( ! _needsLink ) return;
@@ -774,11 +776,19 @@ void Program::PerContextProgram::linkProgram(osg::State& state)
             shadersRequired[shaderObjectHandle[i]]--;
         }
 
+#if !defined(OSG_GL_FIXED_FUNCTION_AVAILABLE)
         const bool useMerged = !_mergedShaders.empty();   /* FlightGear GLES port */
         const unsigned int shaderCount = useMerged ? _mergedShaders.size() : getProgram()->getNumShaders();
+#else
+        const unsigned int shaderCount = getProgram()->getNumShaders();
+#endif
         for(unsigned int i=0; i < shaderCount; ++i)
         {
+#if !defined(OSG_GL_FIXED_FUNCTION_AVAILABLE)
             const Shader* shader = useMerged ? _mergedShaders[i].get() : getProgram()->getShader( i );
+#else
+            const Shader* shader = getProgram()->getShader( i );
+#endif
             Shader::PerContextShader* pcs = shader->getPCS(state);
             if (pcs) shadersRequired[ pcs->getHandle() ]++;
         }
@@ -964,6 +974,7 @@ void Program::PerContextProgram::linkProgram(osg::State& state)
             {
                 _uniformInfoMap[Uniform::getNameID(reinterpret_cast<const char*>(name))] = ActiveVarInfo(loc,type,size);
 
+#if !defined(OSG_GL_FIXED_FUNCTION_AVAILABLE)
                 /* FlightGear GLES port: the shader converter renames identifiers that
                    GLSL ES reserves (e.g. "texture"); keep the original name reachable
                    so osg::Uniform("texture") still finds the sampler. */
@@ -973,6 +984,7 @@ void Program::PerContextProgram::linkProgram(osg::State& state)
                     if (uniformName.compare(0, renamePrefix.size(), renamePrefix) == 0)
                         _uniformInfoMap[Uniform::getNameID(uniformName.substr(renamePrefix.size()))] = ActiveVarInfo(loc,type,size);
                 }
+#endif
 
                 OSG_INFO << "\tUniform \"" << name << "\""
                     << " loc="<< loc

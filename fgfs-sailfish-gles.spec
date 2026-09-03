@@ -6,7 +6,7 @@
 Name:       fgfs-sailfish-gles
 Summary:    FlightGear native GLES backends for Sailfish OS
 Version:    2020.3.19
-Release:    3
+Release:    4
 License:    GPLv2+
 Group:      Amusements/Games
 URL:        https://github.com/smatkovi/fgfs-sailfish
@@ -41,6 +41,29 @@ cp -a opt %{buildroot}/
 /opt/fgfs-gles3
 
 %changelog
+* Thu Sep 03 2026 Sebastian <smatkovi@github> - 2020.3.19-4
+- OSG: GL modes and glHint targets that do not exist under ES are no
+  longer applied. Every one of them was rejected by the driver and raised
+  INVALID_ENUM, and OSG checked for the error after each attempt; about
+  ten thousand round trips per run. Frame time 48 -> 37 ms, picture
+  unchanged. FGFS_GLES_FAT=1 restores the old behaviour for comparison
+- OSG: realize() hands the EGL context back, so OSG's threaded modes can
+  bind it on the draw thread; before, eglMakeCurrent failed there with
+  EGL_BAD_ACCESS and the GL function table came up empty
+- OSG: the PBO readback path is enabled under ES 3, mapping with
+  glMapBufferRange. FGFS_NO_PBO=1 forces the blocking readback
+- OSG: FGFS_GLES_TIMING=1 logs cull, draw and frame times and the number
+  of modes, attributes and drawables per frame, on both the single-thread
+  and the draw-thread path
+- SimGear: FGFS_BTG_OPTIMIZE=1 runs osgUtil::Optimizer on terrain tiles
+  (measured: no effect, terrain shares little state; left as a switch)
+- Built with -O3 -march=armv8.2-a+fp16+dotprod -mtune=cortex-a78 and LTO
+  (measured: cull 4.4 -> 3.5 ms, nothing else); configure-gles3.sh
+  records the full configuration
+- With fgfs-run's DrawThreadPerContext the update phase overlaps with the
+  draw: 34 ms per frame on the Vienna scenery, from 48 at the start of
+  this round
+
 * Mon Aug 31 2026 Sebastian <smatkovi@github> - 2020.3.19-3
 - OSG: desktop GLSL 1.20 effect shaders are rewritten to GLSL ES on load,
   including the fixed-function built-ins (gl_LightSource, gl_Fog,

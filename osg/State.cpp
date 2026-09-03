@@ -77,11 +77,20 @@ State::State():
     _projectionMatrixUniform = new Uniform(Uniform::FLOAT_MAT4,"osg_ProjectionMatrix");
     _modelViewProjectionMatrixUniform = new Uniform(Uniform::FLOAT_MAT4,"osg_ModelViewProjectionMatrix");
     _normalMatrixUniform = new Uniform(Uniform::FLOAT_MAT3,"osg_NormalMatrix");
+#if !defined(OSG_GL_FIXED_FUNCTION_AVAILABLE)
     _modelViewMatrixInverseUniform = new Uniform(Uniform::FLOAT_MAT4,"osg_ModelViewMatrixInverse");
     _modelViewMatrixTransposeUniform = new Uniform(Uniform::FLOAT_MAT4,"osg_ModelViewMatrixTranspose");
     _ffpDirty = true;
+#if !defined(OSG_GL_FIXED_FUNCTION_AVAILABLE)
+    /* FlightGear GLES port: with FGFS_GLES_LEAN=1 the per-attribute check is
+       pure cost - the errors it reports are the desktop-only modes above. */
+    if (!::getenv("FGFS_GLES_FAT")) _checkGLErrors = NEVER_CHECK_GL_ERRORS;
+#endif
     _ffpLastProgram = 0;
     initFFPUniforms();
+#endif
+
+    _fgfsNumAttribs = _fgfsNumModes = _fgfsNumDrawables = 0;
 
     resetVertexAttributeAlias();
 
@@ -1251,6 +1260,7 @@ void State::applyModelViewAndProjectionUniformsIfRequired()
     if (_modelViewProjectionMatrixUniform) _lastAppliedProgramObject->apply(*_modelViewProjectionMatrixUniform);
     if (_normalMatrixUniform) _lastAppliedProgramObject->apply(*_normalMatrixUniform);
 
+#if !defined(OSG_GL_FIXED_FUNCTION_AVAILABLE)
     /* fixed-function emulation (FlightGear GLES port): re-upload on program
        change or value change; PerContextProgram::apply skips unchanged ones. */
     if (_ffpDirty || _ffpLastProgram != _lastAppliedProgramObject)
@@ -1276,6 +1286,7 @@ void State::applyModelViewAndProjectionUniformsIfRequired()
         _modelViewMatrixTransposeUniform->set(t);
         _lastAppliedProgramObject->apply(*_modelViewMatrixTransposeUniform);
     }
+#endif
 }
 
 namespace State_Utils
@@ -1373,6 +1384,7 @@ namespace State_Utils
     }
 }
 
+#if !defined(OSG_GL_FIXED_FUNCTION_AVAILABLE)
 /* ===== fixed-function emulation for GLES builds (FlightGear port) =====
  * FlightGear's effects are desktop GLSL 1.20 against the fixed-function
  * built-ins; GLES has neither.  convertShaderSourceForGLES() rewrites the
@@ -1884,6 +1896,7 @@ bool State::convertShaderSourceForGLES(Shader::Type type, std::string& source) c
     return true;
 }
 
+#endif
 bool State::convertVertexShaderSourceToOsgBuiltIns(std::string& source) const
 {
     OSG_DEBUG<<"State::convertShaderSourceToOsgBuiltIns()"<<std::endl;

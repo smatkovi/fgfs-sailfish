@@ -921,6 +921,7 @@ void Geometry::drawVertexArraysImplementation(RenderInfo& renderInfo) const
 {
     State& state = *renderInfo.getState();
     VertexArrayState* vas = state.getCurrentVertexArrayState();
+    ++state._fgfsNumDrawables;
 
 #if !defined(OSG_GL_FIXED_FUNCTION_AVAILABLE)
     /* FlightGear GLES port: terrain tiles are large; where do their texture
@@ -1008,12 +1009,14 @@ void Geometry::drawVertexArraysImplementation(RenderInfo& renderInfo) const
     if (_fogCoordArray.valid() && _fogCoordArray->getBinding()==osg::Array::BIND_PER_VERTEX)
         vas->setFogCoordArray(state, _fogCoordArray.get());
 
+#if !defined(OSG_GL_FIXED_FUNCTION_AVAILABLE)
     /* FlightGear GLES port: the current VertexArrayState may be the global
        one, with fewer dispatchers than this drawable has units; setTexCoordArray()
        and setVertexAttribArray() would then index out of range. */
     if (!_texCoordList.empty()) vas->assignTexCoordArrayDispatcher(_texCoordList.size());
     if (handleVertexAttributes && !_vertexAttribList.empty())
         vas->assignVertexAttribArrayDispatcher(_vertexAttribList.size());
+#endif
 
     for(unsigned int unit=0;unit<_texCoordList.size();++unit)
     {

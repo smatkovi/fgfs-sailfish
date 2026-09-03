@@ -6,7 +6,7 @@
 Name:       fgfs-sailfish
 Summary:    FlightGear flight simulator runtime for Sailfish OS
 Version:    2020.3.19
-Release:    2
+Release:    3
 License:    GPLv2+
 Group:      Amusements/Games
 URL:        https://github.com/smatkovi/fgfs-sailfish
@@ -92,6 +92,11 @@ PROTOEOF
 /opt/mesa-zink
 
 %changelog
+* Thu Sep 03 2026 Sebastian <smatkovi@github> - 2020.3.19-3
+- fgfs-run selects DrawThreadPerContext for the GLES backends; the update
+  phase then overlaps with the draw. FGFS_THREADING overrides. Zink stays
+  single-threaded, untested there
+
 * Mon Aug 31 2026 Sebastian <smatkovi@github> - 2020.3.19-2
 - fgfs-run: one entry point for the zink, gles2 and gles3 backends, each
   with its own library paths and environment; ZINK_DESCRIPTORS=lazy is the
