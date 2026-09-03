@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- fgtouch: the control channel from harbour-fgview to fgfs, UDP port
+     5501, one comma separated line per update.  Field order matters and
+     has to match ControlSender in the app. -->
+<PropertyList>
+  <generic>
+    <input>
+      <line_separator>newline</line_separator>
+      <var_separator>,</var_separator>
+      <chunk><name>aileron</name><node>/controls/flight/aileron</node><type>float</type></chunk>
+      <chunk><name>elevator</name><node>/controls/flight/elevator</node><type>float</type></chunk>
+      <chunk><name>rudder</name><node>/controls/flight/rudder</node><type>float</type></chunk>
+      <!-- engine[0] is what the engine model reads -->
+      <chunk><name>throttle</name><node>/controls/engines/engine[0]/throttle</node><type>float</type></chunk>
+      <chunk><name>brake</name><node>/controls/gear/brake-parking</node><type>float</type></chunk>
+      <chunk><name>flaps</name><node>/controls/flight/flaps</node><type>float</type></chunk>
+      <chunk><name>gear</name><node>/controls/gear/gear-down</node><type>bool</type></chunk>
+      <!-- current-engine is what the cockpit lever's animation reads -->
+      <chunk><name>throttle-lever</name><node>/controls/engines/current-engine/throttle</node><type>float</type></chunk>
+    </input>
+  </generic>
+</PropertyList>

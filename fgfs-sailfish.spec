@@ -6,13 +6,14 @@
 Name:       fgfs-sailfish
 Summary:    FlightGear flight simulator runtime for Sailfish OS
 Version:    2020.3.19
-Release:    4
+Release:    5
 License:    GPLv2+
 Group:      Amusements/Games
 URL:        https://github.com/smatkovi/fgfs-sailfish
 Source0:    %{name}-%{version}.tar.gz
 Source1:    fgfs-run
 Source2:    fgfs-scenery
+Source3:    fgtouch.xml
 BuildArch:  aarch64
 AutoReqProv: no
 
@@ -80,6 +81,8 @@ chmod 0755 %{buildroot}/opt/fgfs/bin/fgfs-env
 # it is the one every installation has.
 install -m 0755 %{SOURCE1} %{buildroot}/opt/fgfs/bin/fgfs-run
 install -m 0755 %{SOURCE2} %{buildroot}/opt/fgfs/bin/fgfs-scenery
+mkdir -p %{buildroot}/opt/fgfs/share
+install -m 0644 %{SOURCE3} %{buildroot}/opt/fgfs/share/fgtouch.xml
 
 mkdir -p %{buildroot}/opt/fgfs/share
 cat > %{buildroot}/opt/fgfs/share/fgtouch.xml <<'PROTOEOF'
@@ -107,6 +110,10 @@ PROTOEOF
 /opt/mesa-zink
 
 %changelog
+* Thu Sep 03 2026 Sebastian <smatkovi@github> - 2020.3.19-5
+- fgtouch.xml ships from the repository; eighth field sends the throttle
+  to current-engine as well, which the cockpit lever's animation reads
+
 * Thu Sep 03 2026 Sebastian <smatkovi@github> - 2020.3.19-4
 - fgfs-run: flight model at 60 Hz for the GLES backends, FGFS_MODEL_HZ
   overrides
