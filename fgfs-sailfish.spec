@@ -16,10 +16,25 @@ Source2:    fgfs-scenery
 BuildArch:  aarch64
 AutoReqProv: no
 
+# AutoReqProv is off, so this list has to be complete: it is what the
+# binaries load on the device (LD_TRACE_LOADED_OBJECTS, resolved with rpm -qf).
 Requires:   OpenAL
 Requires:   libcurl
-Requires:   aria2
+Requires:   libpng
+Requires:   freetype
+Requires:   fontconfig
+Requires:   expat
+Requires:   zlib
+Requires:   bzip2-libs
+Requires:   xz-libs
+Requires:   dbus-libs
+Requires:   openssl-libs
+Requires:   libhybris-libEGL
+Requires:   libhybris-libGLESv2
 Requires:   boost-system
+# fgfs-scenery
+Requires:   python3-base
+Requires:   aria2
 
 %description
 FlightGear 2020.3.19 nebst OpenSceneGraph, SimGear und einem
@@ -93,6 +108,9 @@ PROTOEOF
 
 %changelog
 * Thu Sep 03 2026 Sebastian <smatkovi@github> - 2020.3.19-3
+- Requires completed from what the binaries actually load; AutoReqProv is
+  off, and the old list would have failed on a device without libpng,
+  freetype, fontconfig, expat or the hybris EGL libraries
 - fgfs-run selects DrawThreadPerContext for the GLES backends; the update
   phase then overlaps with the draw. FGFS_THREADING overrides. Zink stays
   single-threaded, untested there
