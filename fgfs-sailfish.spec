@@ -6,7 +6,7 @@
 Name:       fgfs-sailfish
 Summary:    FlightGear flight simulator runtime for Sailfish OS
 Version:    2020.3.19
-Release:    3
+Release:    4
 License:    GPLv2+
 Group:      Amusements/Games
 URL:        https://github.com/smatkovi/fgfs-sailfish
@@ -107,6 +107,10 @@ PROTOEOF
 /opt/mesa-zink
 
 %changelog
+* Thu Sep 03 2026 Sebastian <smatkovi@github> - 2020.3.19-4
+- fgfs-run: flight model at 60 Hz for the GLES backends, FGFS_MODEL_HZ
+  overrides
+
 * Thu Sep 03 2026 Sebastian <smatkovi@github> - 2020.3.19-3
 - Requires completed from what the binaries actually load; AutoReqProv is
   off, and the old list would have failed on a device without libpng,

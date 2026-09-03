@@ -103,6 +103,9 @@ case "$BACKEND" in
         # Draw on its own thread: the update phase then overlaps with the
         # draw, measured 84 -> 47 ms per frame.  FGFS_THREADING overrides.
         set -- "$@" "--prop:/sim/rendering/multithreading-mode=${FGFS_THREADING:-DrawThreadPerContext}"
+        # 60 Hz flight model: plenty for light aircraft, half the JSBSim
+        # work.  FGFS_MODEL_HZ overrides for aircraft that need more.
+        set -- "$@" "--prop:/sim/model-hz=${FGFS_MODEL_HZ:-60}"
         ;;
     *)
         echo "fgfs-run: unbekanntes Backend '$BACKEND' - siehe --list-backends" >&2
