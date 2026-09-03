@@ -62,7 +62,8 @@ build_one() {
     # mb2 looks for Source1/Source2 next to the spec, in rpm/, not in SOURCES/
     install -m 0755 "$REPO/bin/fgfs-run" "$REPO/bin/fgfs-scenery" "$work/SOURCES/"
     install -m 0755 "$REPO/bin/fgfs-run" "$REPO/bin/fgfs-scenery" "$work/rpm/"
-    install -m 0644 "$REPO/share/fgtouch.xml" "$work/SOURCES/" "$work/rpm/"
+    install -m 0644 "$REPO/share/fgtouch.xml" "$work/SOURCES/"
+    install -m 0644 "$REPO/share/fgtouch.xml" "$work/rpm/"
 
     echo "== Spec aus dem Repository uebernehmen"
     cp "$spec" "$work/rpm/$name.spec"
