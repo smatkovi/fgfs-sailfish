@@ -94,7 +94,7 @@ install -m 0644 %{SOURCE3} %{buildroot}/opt/fgfs/share/fgtouch.xml
 * Thu Sep 03 2026 Sebastian <smatkovi@github> - 2020.3.19-5
 - fgtouch.xml ships from the repository; eighth field sends the throttle
   to current-engine as well, which the cockpit lever's animation reads.
-  The inline copy that used to overwrite it in %install is gone
+  The inline copy that used to overwrite it during install is gone
 
 * Thu Sep 03 2026 Sebastian <smatkovi@github> - 2020.3.19-4
 - fgfs-run: flight model at 60 Hz for the GLES backends, FGFS_MODEL_HZ
