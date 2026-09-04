@@ -18,32 +18,37 @@ OSG_SRC=${OSG_SRC:-$HOME/OpenSceneGraph-OpenSceneGraph-3.6.5}
 SG_SRC=${SG_SRC:-$HOME/simgear-2020.3.19}
 FG_SRC=${FG_SRC:-$HOME/flightgear-2020.3.19}
 
-# Both core types are ARMv8.2-A with fp16 and dotprod, so this runs on the
-# A55 as well as the A78 the scheduler prefers.  Measured gain is small
-# (cull 4.4 -> 3.5 ms) but costs nothing.
-CPU="-O3 -march=armv8.2-a+fp16+dotprod -mtune=cortex-a78 -fno-plt"
-GLES="-DSG_GLES2 -include $SG_SRC/simgear/screen/gles_compat.h"
+# No LTO and no CPU flags: measured, they brought nothing (cull 4.4 -> 3.5 ms,
+# rest unchanged), and the LTO round cost a day.  The GL constants below are
+# what SimGear and FlightGear need under GLES, defined one by one exactly as
+# the GLES2 trees have them.  NOT -include gles_compat.h for everything: that
+# header is meant for tr.cxx alone, and forcing it into every file changed
+# how SimGear builds terrain tiles - the runway came out with constant
+# texture coordinates.
+CPU=""
+SG_DEFS="-DSG_GLES2 -DGL_FOG=0x0B60 -DGL_STENCIL=0x1802 -DGL_EXP=0x0800 -DGL_EXP2=0x0801 -DGL_ALPHA_TEST=0x0BC0 -DGL_LIGHTING=0x0B50 -DGL_FOG_MODE=0x0B65 -DGL_FOG_DENSITY=0x0B62 -DGL_FOG_START=0x0B63 -DGL_FOG_END=0x0B64 -DGL_FOG_COLOR=0x0B66 -DGL_LINEAR=0x2601"
+FG_DEFS="-DSG_GLES2 -DGL_FOG=0x0B60 -DGL_STENCIL=0x1802 -DGL_EXP=0x0800 -DGL_EXP2=0x0801 -DGL_ALPHA_TEST=0x0BC0 -DGL_LIGHTING=0x0B50"
 
 echo "== OSG (GLES3)"
 sb2 -t $TARGET cmake -S "$OSG_SRC" -B "$OSG_SRC/build-gles3" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/osg-gles3 \
   -DOPENGL_PROFILE=GLES3 -DOSG_WINDOWING_SYSTEM=None \
   -DCMAKE_C_FLAGS="$CPU" -DCMAKE_CXX_FLAGS="$CPU" \
-  -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON
+  -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF
 
 echo "== SimGear (GLES3)"
 sb2 -t $TARGET cmake -S "$SG_SRC" -B "$SG_SRC/build-gles3" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/osg-gles3 \
   -DCMAKE_PREFIX_PATH=/opt/osg-gles3 \
-  -DCMAKE_C_FLAGS="$CPU $GLES" -DCMAKE_CXX_FLAGS="$CPU $GLES" \
-  -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON
+  -DCMAKE_C_FLAGS="-DSG_GLES2" -DCMAKE_CXX_FLAGS="$SG_DEFS" \
+  -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF
 
 echo "== FlightGear (GLES3)"
 sb2 -t $TARGET cmake -S "$FG_SRC" -B "$FG_SRC/build-gles3" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/fgfs-gles3 \
   -DCMAKE_PREFIX_PATH=/opt/osg-gles3 \
-  -DCMAKE_C_FLAGS="$CPU $GLES" -DCMAKE_CXX_FLAGS="$CPU $GLES" \
-  -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON
+  -DCMAKE_C_FLAGS="" -DCMAKE_CXX_FLAGS="$FG_DEFS" \
+  -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF
 
 echo "== fertig - die uebrigen Optionen (Windowing, Sound, ...) bleiben, wie sie"
 echo "   in den vorhandenen build-gles3/CMakeCache.txt stehen; dieses Skript"
