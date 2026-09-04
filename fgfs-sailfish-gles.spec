@@ -6,7 +6,7 @@
 Name:       fgfs-sailfish-gles
 Summary:    FlightGear native GLES backends for Sailfish OS
 Version:    2020.3.19
-Release:    5
+Release:    6
 License:    GPLv2+
 Group:      Amusements/Games
 URL:        https://github.com/smatkovi/fgfs-sailfish
@@ -41,6 +41,11 @@ cp -a opt %{buildroot}/
 /opt/fgfs-gles3
 
 %changelog
+* Fri Sep 04 2026 Sebastian <smatkovi@github> - 2020.3.19-6
+- realize() hands the EGL context back again, unconditionally. The -5
+  build had it behind a switch left over from a test, and the draw thread
+  crashed at start with an empty GL function table
+
 * Fri Sep 04 2026 Sebastian <smatkovi@github> - 2020.3.19-5
 - Built with the GLES2 trees' configuration again: no LTO, no CPU flags,
   the GL constants defined one by one. The -4 build forced gles_compat.h
