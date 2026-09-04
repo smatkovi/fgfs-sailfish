@@ -1169,6 +1169,7 @@ class OSG_EXPORT State : public Referenced
             if (fat) return false;
             return mode == 0x8643      /* GL_VERTEX_PROGRAM_TWO_SIDE */
                 || mode == 0x8642      /* GL_VERTEX_PROGRAM_POINT_SIZE */
+                || mode == 0x0DE0      /* GL_TEXTURE_1D */
                 || mode == 0x0DE1      /* GL_TEXTURE_2D */
                 || mode == 0x4001;     /* GL_COLOR_LOGIC_OP */
         }
@@ -1495,6 +1496,10 @@ class OSG_EXPORT State : public Referenced
         const Program::PerContextProgram* _ffpLastProgram;
         Vec4                        _ffpMaterialEmission, _ffpMaterialAmbient, _ffpMaterialDiffuse, _ffpLightModelAmbient;
         Uniform* ffpUniform(const std::string& name, Uniform::Type type);
+        /* fallback program for geometry without one (FlightGear GLES port) */
+        ref_ptr<Program>            _fallbackProgram[2];   /* [0] plain, [1] textured */
+        ref_ptr<Uniform>            _fallbackSampler;
+        void applyFallbackProgramIfNeeded();
         void initFFPUniforms();
         void updateFFPSceneColor();
 #endif

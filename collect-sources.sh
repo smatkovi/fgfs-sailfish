@@ -37,6 +37,7 @@ src/osg/VertexArrayState.cpp
 src/osg/VertexAttribDivisor.cpp
 src/osgViewer/GraphicsWindowEGL.cpp
 src/osg/Hint.cpp
+src/osg/Texture1D.cpp
 src/osgViewer/Renderer.cpp
 "
 

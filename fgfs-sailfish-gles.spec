@@ -6,7 +6,7 @@
 Name:       fgfs-sailfish-gles
 Summary:    FlightGear native GLES backends for Sailfish OS
 Version:    2020.3.19
-Release:    6
+Release:    7
 License:    GPLv2+
 Group:      Amusements/Games
 URL:        https://github.com/smatkovi/fgfs-sailfish
@@ -41,6 +41,19 @@ cp -a opt %{buildroot}/
 /opt/fgfs-gles3
 
 %changelog
+* Fri Sep 04 2026 Sebastian <smatkovi@github> - 2020.3.19-7
+- OSG: geometry without a shader gets a built-in one - vertex colour,
+  times the texture on unit 0 if there is one. GLES draws nothing without
+  a program, and FlightGear's sky dome, HUD and 2D panel have none; the
+  sky was black
+- OSG: 1D textures under GLES. The shader converter turns sampler1D into
+  sampler2D and texture1D(s, x) into texture2D(s, vec2(x, 0.5)), and
+  Texture1D::apply uploads the image as a 2D texture of height 1. Fields
+  and forests (crop.frag, forest.frag) rendered black before
+- OSG: "const float X = SOME_INT;" gets a float() constructor, which GLSL
+  ES accepts as a constant expression
+- 50 of the 52 default effect shaders now pass GLSL ES 3.00 validation
+
 * Fri Sep 04 2026 Sebastian <smatkovi@github> - 2020.3.19-6
 - realize() hands the EGL context back again, unconditionally. The -5
   build had it behind a switch left over from a test, and the draw thread

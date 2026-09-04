@@ -763,6 +763,9 @@ void State::apply(const StateSet* dstate)
             }
         }
 
+#if !defined(OSG_GL_FIXED_FUNCTION_AVAILABLE)
+        applyFallbackProgramIfNeeded();   /* FlightGear GLES port */
+#endif
         if (dstate->getUniformList().empty())
         {
             if (_currentShaderCompositionUniformList.empty()) applyUniformMap(_uniformMap);
@@ -832,6 +835,9 @@ void State::apply()
         applyShaderComposition();
     }
 
+#if !defined(OSG_GL_FIXED_FUNCTION_AVAILABLE)
+    applyFallbackProgramIfNeeded();   /* FlightGear GLES port */
+#endif
     if (_currentShaderCompositionUniformList.empty()) applyUniformMap(_uniformMap);
     else applyUniformList(_uniformMap, _currentShaderCompositionUniformList);
 
@@ -1625,6 +1631,37 @@ namespace osg_gles
                 addDecl(decls, "uniform mat4 osg_TextureMatrix" + num.str() + ";");
         }
 
+        /* No 1D textures in GLSL ES.  sampler1D becomes sampler2D, and
+           texture1D(s, x) becomes texture2D(s, vec2(x, 0.5)); Texture1D::apply
+           uploads the image as a 2D texture of height 1 to match. */
+        {
+            static const std::regex s1d("\\bsampler1D\\b");
+            src = std::regex_replace(src, s1d, "sampler2D");
+            std::string::size_type pos = 0;
+            while ((pos = src.find("texture1D", pos)) != std::string::npos)
+            {
+                std::string::size_type open = src.find('(', pos);
+                if (open == std::string::npos) break;
+                int depth = 0; std::string::size_type comma = std::string::npos, close = std::string::npos;
+                for (std::string::size_type i = open; i < src.size(); ++i)
+                {
+                    if (src[i] == '(') ++depth;
+                    else if (src[i] == ')') { if (--depth == 0) { close = i; break; } }
+                    else if (src[i] == ',' && depth == 1 && comma == std::string::npos) comma = i;
+                }
+                if (close == std::string::npos || comma == std::string::npos) { pos += 9; continue; }
+                std::string sampler = src.substr(open + 1, comma - open - 1);
+                std::string coord   = src.substr(comma + 1, close - comma - 1);
+                std::string repl = "texture2D(" + sampler + ", vec2(" + coord + ", 0.5))";
+                src.replace(pos, close - pos + 1, repl);
+                pos += repl.size();
+            }
+            /* "const float X = SOME_INT_MACRO;" is not a constant expression of
+               type float in GLSL ES; a float() constructor around it is. */
+            static const std::regex constFloat("(\\bconst\\s+float\\s+[A-Za-z_][A-Za-z0-9_]*\\s*=\\s*)([A-Za-z_][A-Za-z0-9_]*)\\s*;");
+            src = std::regex_replace(src, constFloat, "$1float($2);");
+        }
+
         if (es3)
         {
             /* GLSL ES 3.00 reserves some names FlightGear uses as identifiers
@@ -1897,6 +1934,65 @@ bool State::convertShaderSourceForGLES(Shader::Type type, std::string& source) c
 }
 
 #endif
+#if !defined(OSG_GL_FIXED_FUNCTION_AVAILABLE)
+/* FlightGear GLES port: nothing draws without a program under GLES, and
+   FlightGear's sky dome, HUD and 2D panel have none.  Bind a built-in one
+   when the state set left none bound - vertex colour, times the texture on
+   unit 0 if there is one.  That is what the fixed-function pipeline does
+   for such geometry with lighting off. */
+void State::applyFallbackProgramIfNeeded()
+{
+    if (_lastAppliedProgramObject) return;
+    static const int off = (::getenv("FGFS_GLES_NO_FALLBACK") != 0) ? 1 : 0;
+    if (off) return;
+
+    const bool textured = getLastAppliedTextureAttribute(0, StateAttribute::TEXTURE) != 0;
+    ref_ptr<Program>& prog = _fallbackProgram[textured ? 1 : 0];
+    if (!prog)
+    {
+        /* GLSL ES 1.00, which the converter leaves alone; State supplies
+           osg_ModelViewProjectionMatrix, the attribute aliases and
+           osg_TextureMatrix0. */
+        const char* vs =
+            "attribute vec4 osg_Vertex;\n"
+            "attribute vec4 osg_Color;\n"
+            "attribute vec4 osg_MultiTexCoord0;\n"
+            "uniform mat4 osg_ModelViewProjectionMatrix;\n"
+            "uniform mat4 osg_TextureMatrix0;\n"
+            "varying vec4 fgfs_color;\n"
+            "varying vec2 fgfs_tc;\n"
+            "void main() {\n"
+            "  gl_Position = osg_ModelViewProjectionMatrix * osg_Vertex;\n"
+            "  fgfs_color = osg_Color;\n"
+            "  fgfs_tc = (osg_TextureMatrix0 * osg_MultiTexCoord0).st;\n"
+            "}\n";
+        const char* fsPlain =
+            "precision mediump float;\n"
+            "varying vec4 fgfs_color;\n"
+            "varying vec2 fgfs_tc;\n"
+            "void main() { gl_FragColor = fgfs_color; }\n";
+        const char* fsTex =
+            "precision mediump float;\n"
+            "uniform sampler2D fgfs_tex;\n"
+            "varying vec4 fgfs_color;\n"
+            "varying vec2 fgfs_tc;\n"
+            "void main() { gl_FragColor = fgfs_color * texture2D(fgfs_tex, fgfs_tc); }\n";
+        prog = new Program;
+        prog->setName(textured ? "fgfs_fallback_textured" : "fgfs_fallback_plain");
+        prog->addShader(new Shader(Shader::VERTEX, vs));
+        prog->addShader(new Shader(Shader::FRAGMENT, textured ? fsTex : fsPlain));
+        if (!_fallbackSampler) _fallbackSampler = new Uniform("fgfs_tex", 0);
+        OSG_WARN << "State: fallback program (" << prog->getName()
+                 << ") for geometry without a shader" << std::endl;
+    }
+    prog->apply(*this);
+    if (textured && _lastAppliedProgramObject) _lastAppliedProgramObject->apply(*_fallbackSampler);
+    /* the fixed-function uniforms (texture matrix etc.) need a fresh upload
+       for this program */
+    _ffpDirty = true;
+}
+#endif
+
 bool State::convertVertexShaderSourceToOsgBuiltIns(std::string& source) const
 {
     OSG_DEBUG<<"State::convertShaderSourceToOsgBuiltIns()"<<std::endl;
