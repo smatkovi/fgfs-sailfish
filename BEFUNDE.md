@@ -2126,3 +2126,29 @@ Ohne Models fehlen weiterhin die OBJECT_SHARED-Modelle in den .stg-Dateien
 („Failed to load OBJECT_SHARED Models/…" im Log) — Gebäude/Objekte, nicht
 Gelände. Ein gefilterter Models-Abruf (nur die in den .stg der Region
 referenzierten Modelle) wäre der saubere Weg; offen.
+
+## P44 — Nachladen im Flug: FlightGears TerraSync tut es, mit vorgegebenem Spiegel
+
+Frage: kann Szenerie *während des Flugs* nachkommen, wenn man die
+vorab geholte Region verlässt? FlightGear bringt TerraSync mit; der
+GLES-Bau enthält es (154 Treffer, `/sim/terrasync/*` vorhanden). Sein
+Server wird per DNS-NAPTR auf `terrasync.flightgear.org` gesucht — auf
+Mobilfunk-Resolvern die übliche Fehlerquelle („no DNS entry found"). Mit
+`--prop:/sim/terrasync/http-server=<Spiegel>` entfällt die Suche
+(`stripPath` entfernt nur Schrägstriche am Ende; die URL darf den
+`/ws2`-Pfad tragen, `_httpServer + "/Terrain/…"`).
+
+**Test 1 (Graz):** untauglich — e015n47 lag schon in der LOWW-Box.
+**Test 2 (Innsbruck, 5 min):** TerraSync lief, fasste 18 691 Dateien
+an (`.dirhash` im weltweiten Airports-Baum — es holt Airports-Archiv und
+Models beim Start, `syncAirportsModels()`), aber e011n47 war noch nicht da.
+Zu früh abgebrochen.
+**Test 3 (Innsbruck, lang):** bei t+60 s 52 Dateien in e011n47, dann
+e011n46, e010n47, e010n46 jeweils Terrain+Objects („Successfully
+synchronized"); Frame: Piste 26 in Innsbruck mit Bergen.
+
+**In der App (0.9.10):** Schalter „Update scenery in flight" →
+`--enable-terrasync` + `http-server`-Property; aus per Vorgabe (Netz im
+Flug, einmalig Airports-Archiv und Models). Verträgt sich mit
+`fgfs-scenery`: gleiche Verzeichnisse, gleiche `.dirindex`; TerraSync legt
+zusätzlich `.dirhash` und `RecheckCache` an.

@@ -238,6 +238,11 @@ Abflughafen da ist, und lädt nur, wenn nicht.
   mit tausenden Indizes; sie mit anzufordern hielt einen Start 20 Minuten
   (P43). `--check` liefert 2, wenn Kacheln da sind, aber kein Vermerk:
   dann startet der Simulator sofort.
+* Einstellungen → „Update scenery in flight": FlightGears eigenes
+  TerraSync (`--enable-terrasync`, Spiegel per
+  `/sim/terrasync/http-server` vorgegeben, weil die DNS-NAPTR-Suche
+  mobil scheitert). Gemessen (P44): Innsbruck-Kacheln nach 60 s,
+  Nachbarkacheln gleich mit. Aus per Vorgabe.
 * Einstellungen → „Real weather": `--enable-real-weather-fetch` statt
   `--disable-…` (METAR vom Netz, auch im Flug; aus per Vorgabe).
 * `fgfs-run --region` macht dasselbe für den Kommandozeilen-Gebrauch;
