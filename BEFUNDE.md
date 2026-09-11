@@ -2152,3 +2152,37 @@ synchronized"); Frame: Piste 26 in Innsbruck mit Bergen.
 Flug, einmalig Airports-Archiv und Models). Verträgt sich mit
 `fgfs-scenery`: gleiche Verzeichnisse, gleiche `.dirindex`; TerraSync legt
 zusätzlich `.dirhash` und `RecheckCache` an.
+
+## P45 — Szenarien und Tutorials auf dem GLES-Bau
+
+**Trägerszenario** (`--enable-ai-models --ai-scenario=nimitz_demo
+--carrier=Nimitz`, c172p): Position 37.798 N / −122.601 W, 70 ft; `/ai/models`
+zählt den Träger; Modell „Nimitz" geladen; Frame zeigt die c172p auf dem
+Deck mit Deckstreifen. `--carrier` hat Vorrang vor `--airport`
+(positioninit.cxx:667 vor :704), der Flughafen kann also mitgegeben werden.
+
+**Tutorials, erster Versuch:** `tutorial.startTutorial()` → „Nasal runtime
+error: undefined symbol: tutorial". Das Modul ist per Vorgabe aus
+(`defaults.xml`: `/nasal/tutorial/enabled=false`); FlightGears eigener
+Tutorial-Dialog schaltet es beim ersten Öffnen ein. Die App setzt jetzt
+`/nasal/tutorial/enabled` und lädt zur Sicherheit per `io.load_nasal`
+nach. Die Liste selbst kommt sauber aus dem Baum (`ls /sim/tutorials`,
+21 Einträge; Werte tab-getrennt, Beschreibung mehrzeilig).
+
+**Tutorials, zweiter Versuch (P45 Fortsetzung):** Das Modul hält seine
+Property-Handles in einem Listener auf `/nasal/tutorial/loaded`; die
+Nasal-Verwaltung setzt das nach dem Laden eines Moduls auf dem normalen
+Weg. Von Hand mit `io.load_nasal` geladen, feuert der Listener nie —
+`markerN` bleibt nil, und der erste Aufruf stirbt mit „non-objects have no
+members" (tutorial.nas:376, aus stopTutorial:128, aus startTutorial:63).
+Mit `setprop("/nasal/tutorial/loaded", 1)` nach dem Laden läuft es.
+
+**Lauf (c172p, PHTO, „Start Up"):** `running=1`, Schritte zogen durch —
+„After finishing the Preflight Inspection…" → „Verify that the parking
+brake is still set." → „Check that all circuit breakers are in." → (Schritt
+1) „Prime the engine a bit more!". `last-message` wird gesetzt, obwohl
+`display.write` davor auf das PUI-Fenster schreibt, das es hier nicht gibt
+— die PUI-Rümpfe des GLES-Baus werfen nicht. Ein Nasal-Fehler bleibt
+(„undefined symbol: sim" in `/sim/tutorials/tutorial[1]/nasal:6`) — der
+steckt im Tutorial des c172p selbst, nicht in unserem Weg, und hält die
+Lektion nicht auf.

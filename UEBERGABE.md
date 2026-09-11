@@ -276,6 +276,33 @@ innen, sodass die Prüfung direkt nach erfolgreichem Abruf scheiterte.
 * Zweitgerät Xperia 10 V: `defaultuser@192.168.1.5`, SSH-Schlüssel liegt
   vor, aber kein passwortloses `sudo` — RPMs dort per `devel-su rpm -Uvh`.
 
+## Lektionen und Szenarien (App 0.10.0)
+
+**Lektionen** = FlightGears Tutorials, die es je Flugzeug gibt (c172p:
+vierzehn, vom Preflight bis zum Triebwerksausfall). Knopf „Lessons" auf
+der Flugseite → Liste aus `/sim/tutorials` (über den Telnet-Kanal
+gelesen), Start per Nasal. Die Anweisungen zeigt FlightGear sonst in
+einem PUI-Fenster, das dieser Bau nicht hat — die App liest sie aus
+`/sim/tutorials/last-message` (alle 1,5 s) und blendet sie über dem Bild
+ein. Vor dem Start wird die Szenerie am Ort der Lektion geholt (die des
+c172p spielen in Hilo). Zwei Fallen, beide gemessen (BEFUNDE P45):
+* Das Modul ist per Vorgabe aus; nach `io.load_nasal` muss
+  `/nasal/tutorial/loaded` gesetzt werden, sonst bleiben alle
+  Property-Handles nil.
+* `/sim/tutorials/running` ist **1/0**, nicht true/false.
+
+**Szenarien** = FlightGears AI-Szenarien aus `FGData/AI/*.xml` (27
+gefunden, 7 mit Flugzeugträger). Auswahl auf der Startseite; bei einem
+Träger startet das Flugzeug auf dem Deck (`--carrier` hat in FlightGear
+Vorrang vor `--airport`) und die Szenerie wird **am Schiff** geholt, nicht
+am Flughafen. AI-Modelle werden nur für ein Szenario eingeschaltet.
+
+**Pause im Hintergrund** (Einstellungen, per Vorgabe an): `/sim/freeze/master`
+und `/sim/freeze/clock`, dazu Bildrate auf 2 Hz — FlightGear zeichnet auch
+eingefroren weiter, und das ist, was den Akku kostet. Ausgelöst über eine
+gebundene Eigenschaft auf `Qt.application.active`, nicht über
+`Connections` — ein falscher Signalname dort bleibt still.
+
 ## Noch offen, unabhängig davon
 
 * Zink stürzt mit der c172p nach etwa 40 Sekunden ab (Terminate-Handler);
