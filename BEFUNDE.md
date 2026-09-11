@@ -2186,3 +2186,179 @@ brake is still set." → „Check that all circuit breakers are in." → (Schrit
 („undefined symbol: sim" in `/sim/tutorials/tutorial[1]/nasal:6`) — der
 steckt im Tutorial des c172p selbst, nicht in unserem Weg, und hält die
 Lektion nicht auf.
+
+## P46 — Szenarien: geladen, aber am falschen Ort — und eines gar nicht
+
+Meldung: „statt Szenarien wurde der Flughafen geladen". Zwei Ursachen.
+
+1. **Ort.** Nur die sieben Trägerszenarien setzen das Flugzeug um
+   (`--carrier`). Die übrigen Objekte stehen, wo das Szenario sie
+   hinlegt — zwölf davon an festen Orten (KSFO-Abflüge, Schiffe in der
+   Bucht, AirTrain, ICE bei Frankfurt, NYMR in Yorkshire, Shuttle in
+   Edwards, Schleppzug in Reid-Hillview, Fähren bei Victoria), acht folgen
+   dem Flugzeug (Wingmen, Droptanks, Ballone per Nasal relativ zur
+   Position). Mit LOWW als Abflug lädt FlightGear die San-Francisco-Objekte
+   10 000 km entfernt; zu sehen ist nur der Flughafen.
+   **Fix (0.11.1):** FgRuntime bestimmt den Ort aus `<latitude>/<longitude>`
+   eines Eintrags, sonst aus dem ersten Bodenwegpunkt des Flugplans (sonst
+   dem ersten; der Shuttle-Plan beginnt 110 km draußen), auch wenn der
+   Flugplan nur in `<parameters>` steht und die Einträge per Alias darauf
+   zeigen (ICE3, NYMR). Abflug: Flughafen innerhalb 3 km, sonst großer
+   innerhalb 40 km, sonst der nächste (≤ 200 km). Ergebnis (in Python
+   nachgerechnet, gleiche Regel): KSFO für sechs Szenarien, KRHV (1,0 km),
+   EDDF (11,8), CYYJ (25,9), EGNM (29,6), KEDW (3,2), EGXU (38,8 km — der
+   Zug ist von dort kaum zu sehen). Die gewählte Piste gilt dann nicht.
+2. **aircraft_demo lädt nie.** Mit `--airport=KSFO --ai-scenario=aircraft_demo`
+   steht „United 720" in `/ai/models/aircraft`, aber 60 s lang bei
+   0/0, 0 kt. Log: `FGAIFlightPlan::Flightplan missing END node`.
+   `KSFO_depart_south_28L.xml` endet mit END **und danach EOF**;
+   `parseProperties` verlangt END als letzten Wegpunkt
+   (AIFlightPlan.cxx:257). Alle anderen 13 Szenario-Flugpläne enden auf END.
+   **Fix:** `fg_aiplan_eof.py` überspringt Wegpunkte namens EOF beim Lesen.
+   Mit dem gepatchten fgfs (5.2, sonst gleiche Bibliotheken): „missing END"
+   weg, United 720 bei t+0/20/40/60 s: 37.618/−122.377, 198 kt, 526 ft →
+   37.610/−122.417, 268 kt, 2177 ft → 37.577/−122.446, 301 kt, 3808 ft →
+   37.530/−122.441, 320 kt, 5449 ft — Abflug von 28L mit Linkskurve nach
+   Süden, wie der Plan es beschreibt. Beim Fertigladen (83 s) ist er
+   schon in der Luft; `<repeat>1</repeat>` lässt ihn nach END neu beginnen.
+
+Die C++-Suche selbst headless geprüft (`FgRuntime` in einem Konsolenprogramm,
+gegen die echte FGData und `/usr/share/harbour-fgview/airports`): gleiche
+Flughäfen wie die Python-Nachrechnung, Träger und folgende Szenarien ohne.
+`refreshScenarios` braucht damit 308 ms (214 JSON-Dateien), einmal beim
+App-Start.
+
+*Voraussetzungen der Probe:* dass `/ai/models/<typ>/position/latitude-deg`
+bei einem laufenden AI-Objekt ungleich 0 ist (für die Träger im selben
+Lauf nicht geprüft); dass der Lauf über `apprepro.py` (ohne App, gleiche
+Argumente) dasselbe tut wie die App.
+
+## P47 — „Mit Wetter öffnet das Cockpit nicht": ein verschluckter push
+
+Der Simulator lief (Log, Telnet), die Cockpitseite kam nicht. Echtes
+Wetter verlängert den Start nur um ~3 s (FlightGear wartet höchstens
+`metar-fetch-timeout-msec` = 6 s), genug, dass der Zustandswechsel in einen
+Seitenübergang fällt. Silica ignoriert `pageStack.push` während
+`pageStack.busy`; das Merkflag `cockpitOpened` war da schon gesetzt, ein
+zweiter Versuch kam nie. **Fix (0.10.2):** Timer `cockpitPush`, wiederholt
+alle 150 ms, bis der Stapel frei und die Startseite oben ist. Vom
+Benutzer bestätigt („cockpit ist erschienen").
+
+## P48 — Hubschrauber: die allgemeine Startroutine kennt keine Rotorbremse
+
+ec135p2: der allgemeine Start hielt die Anlasser, ignorierte aber
+`/controls/rotor/brake` und die FADEC-Zustandsmaschine; der Rotor stand.
+**Fix (0.10.2):** zuerst die Routine des Flugzeugs selbst (Nasal-Namensräume
+außer den FGData-Kernmodulen nach `autostart`/`startup` durchsuchen), immer
+`/controls/rotor/brake=0`; A320 über `acconfig.taxi()`; sonst allgemein.
+Messung: Rotor 291,6 U/min, Bremse 0. Triebwerk 2 bleibt bei ~19 % N1 —
+das liegt in der ec135-Startroutine selbst.
+
+## P49 — Start in der Luft und im Endanflug
+
+`--runway` + `--offset-distance` + `--glideslope`; FlightGear rechnet die
+Höhe aus (positioninit.cxx, `fgSetDistOrAltFromGlideSlope`). Ohne `--trim`
+gibt JSBSim das Flugzeug untrimmt frei: c172p nach 20 s in einer Spirale,
+anfänglicher Kurs falsch. Mit `--trim` Kurs 292,9° auf LOWW 29. Die
+Trimmung der c172p stellt den Gashebel nicht sinnvoll (0,8); die App setzt
+nach `sceneryloaded` den Schub je Flugzeugart (Kolben 0,35, Turboprop
+0,45, Jet 0,55). Motoren laufen nur mit `/sim/presets/running=true`
+(JSBSim); YASim-Jets und -Turbinen laufen ohnehin, Kolben nicht.
+*Nicht geprüft:* Hubschrauber im Anflug (1,5 nm, 6°), Segler.
+
+## P50 — 0.10.2: Slots beim Umschreiben gelöscht, Compiler merkt nichts
+
+Beim Neuschreiben von `startEngine` fielen `setPaused`, `refreshTutorials`,
+`startTutorial`, `stopTutorial` weg. C++ baute, weil nur QML sie aufruft;
+QML-Aufrufe auf fehlende Slots scheitern still. **Wache:**
+`tools-check-qml-api.py` vergleicht öffentliche Slots/`Q_INVOKABLE`/
+`Q_PROPERTY` von ControlSender und FgRuntime mit allen `ctl.X`/`rt.X` in
+QML; auf dem 0.10.2-Stand meldet es nachweislich 5 Lücken, auf 0.11.x 0.
+
+## P51 — Sailfish OS 5.0 (F(x)tec Pro1-X): gleiche Quellen, anderes Ziel
+
+Pro1-X: SFOS 5.0.0.78, glibc 2.30, libstdc++ bis GLIBCXX_3.4.28. Die
+5.2-Builds verlangen GLIBC_2.38 / GLIBCXX_3.4.32. Was sie davon benutzen
+(objdump über fgfs und alle OSG-Bibliotheken): `__isoc23_strtol/strtoul/
+sscanf` (C23-Umleitungen der Header), `fmod/fmodf@2.38`, `pthread_*`,
+`dl*`, `shm_open@2.34` (libpthread/libdl in libc verschmolzen), `stat*@2.33`,
+`ios_base_library_init@3.4.32`, `__throw_bad_array_new_length@3.4.29`,
+`condition_variable::wait@3.4.30`. Alles Versionsmarken von Funktionen, die
+es in 2.30 auch gibt — gegen die 5.0-Header übersetzt verschwinden sie,
+**ohne Funktionsverlust**.
+
+Bau (SDK-Ziel SailfishOS-5.0.0.62-aarch64): kein ninja im 5.0-Tooling →
+GNU Make; `sb2 -m sdk-install make install` scheitert (kein make im Ziel) →
+DESTDIR-Staging + Kopie als root. CMake-Cache aus dem 5.2-Baum übernommen
+ohne Compiler-, Bibliotheks- und Include-Einträge, `CMAKE_C(XX)_FLAGS`
+ausdrücklich neu gesetzt (sonst fehlt `-DSG_GLES2`). plib: `configure`
+verlangt `glNewList` aus libGL — Cache-Antwort `ac_cv_lib_GL_glNewList=yes`,
+libGL.so → libGLESv2.so nur für die Linktests. `-DSG_GLES2` gehört in
+CPPFLAGS: erst damit macht `gles_compat.h` PUIs Immediate-Mode-Aufrufe zu
+Leeroperationen. Ohne es baute plib, aber fgfs linkte nicht (`glColor4f`,
+`glVertex2i`, `glEnd` … undefiniert); die 5.2-Bibliotheken verweisen nur
+auf GLES2-Funktionen (nm), das Skript vergleicht das jetzt. `gles_compat.h` fehlt
+in `make install`, von Hand nach `include/plib`. Skripte:
+`sfos50-stack.sh`, `sfos50-driver.sh`, `sfos50/pack-sfos50.sh`.
+
+OSG-Modelltest gegen 5.0 auf dem Pro1-X (Adreno 610, libhybris): der
+Fahrtmesser der c172p korrekt texturiert.
+
+SFOS 5.1.0.11 hätte glibc 2.41 und GCC 13.4, Gecko ESR 91 (5.2: ESR 115).
+Für den Pro1-X gibt es im OBS `nemo:testing:hw:fxtec:halium-qx1050:5.1`, die
+ssu-Vorlagen setzen aber `%(release)` ein — `sfos-upgrade` auf 5.1.0.11 liefe
+auf 404 in den Adaptionsrepos.
+
+## P52 — Schubumkehr am A320: umgeschaltet zu früh, Tiefe am falschen Hebel
+
+Messung mit dem Skript, das 0.11.0 schickt (A320-200-CFM, LOWW, Triebwerke
+über `acconfig.taxi()`): `toggleFastRevThrust` vorhanden, aber
+`reverser` bleibt 0, Position 0. Die Bedingungen der Funktion
+(engines-common.nas:59): beide `/systems/thrust/stateN == "IDLE"`, beide
+Reverser 0, `wow` an Haupt­fahrwerk 1 und 2, `/sim/input/selected/engine[i]`.
+Gemessen: state1/2 = **MAN**, wow true, selected true, Hebel 0.25 (vom
+Taxi-Zustand). In der App setzt der Schubhebel zwar erst 0 und schaltet dann
+um — aber der FADEC stellt IDLE erst einen Moment nach dem Hebel fest, und
+direkt danach schrieb die App die Tiefe als Vorwärtsschub; die Umschaltung
+kam also nie bei IDLE an. Außerdem nimmt der A320-FADEC im Umkehrbetrieb
+den Schub aus `throttle-rev` (fadec-cfm.xml „Throttle Output": bei
+`reverser == 1` gilt `throttle-rev`), nicht aus dem Schubhebel.
+
+**Fix (0.11.2):** Das Skript versucht die Umschaltung vier Sekunden lang
+alle 0,25 s, solange sie noch gewünscht ist; ausgefahren überträgt es
+`/sim/fgtouch/reverse-depth` alle 0,1 s als `0.05 + 0.60·Tiefe` auf
+`throttle-rev` (Bereich der A320-eigenen Tasten). Welche Logik gilt, schreibt
+es nach `/sim/fgtouch/reverse-mode`; ControlSender liest das zurück und
+hält beim A320 den Vorwärtshebel auf Leerlauf, sonst ist die Tiefe der
+Schubhebel wie bisher.
+
+Messung mit dem neuen Skript (Hebel vorher auf 0, Tiefe 1.0):
+`reverse-mode = aircraft`, beide Reverser true, Position 1/1,
+`throttle-rev` 0.65, N1 45,6 % → 74,1 %; eingefahren: Reverser false,
+Position 0. *Nicht gemessen:* ein Umkehrbetrieb mit Rollen nach der
+Landung; das generische Verhalten an einem YASim-Jet.
+
+*Nebenbefund:* Das verkürzte Argumentpaket des alten Testskripts (Vegetation
+an, kein DrawThreadPerContext) ließ fgfs mit dem A320 zweimal nach ~200 s mit
+SIGSEGV enden; mit der Argumentliste der App lief es durch. Nicht weiter
+verfolgt.
+
+## P53 — Pro1-X (SFOS 5.0, Adreno 610): läuft; erste Starts blieben stehen
+
+Die 5.0-Pakete ausgepackt nach `~/fgfs50-test` (ohne root), FGData vom
+Jolla-Telefon kopiert, Start mit den App-Argumenten (`pro1x-repro.py`):
+`GL OpenGL ES 3.2 V@0502.0 … on Adreno (TM) 610`, Pbuffer 1024×768,
+„dma-heap alloc fehlgeschlagen" (erwartet, Fallback). **Dritter Lauf:**
+geladen, Bild: c172p-Cockpit mit Instrumenten, Volumenwolken, Himmel, Meer
+(keine Szenerie für LOWW auf dem Gerät).
+
+Die ersten beiden Läufe blieben stehen: NavCache-Neuaufbau (Erststart)
+125 s, Initialisierung bis 149 s („Shader Compositor/Shaders/text.vert not
+found, using classic"), danach **kein Log, keine neuen Bilder** (Bildzähler
+im Shared Memory fest bei 4088), Prozess im Zustand R, bis zum Abbruch nach
+423 bzw. 612 s. Der dritte Lauf (Cache vorhanden) kam an derselben Stelle
+nach 20 s vorbei, mit stillen Lücken von 17 und 25 s danach.
+*Offen:* ob es am Erststart hängt oder an der Laufzeit bzw. Bildzahl (beide
+Stopps nach ~4000 Zählerschritten). Läuft: ein Dauerlauf mit Bildzähler.
+`gdb` und `strace` sind auf dem Gerät; `ptrace_scope=1`, also nur mit gdb
+als Elternprozess (`GDB_WRAP=1`).

@@ -8,7 +8,7 @@
 Name:       fgfs-sailfish-gles
 Summary:    FlightGear native GLES backends for Sailfish OS
 Version:    2020.3.19
-Release:    11
+Release:    12
 License:    GPLv2+
 Group:      Amusements/Games
 URL:        https://github.com/smatkovi/fgfs-sailfish
@@ -56,6 +56,14 @@ cp -a opt/fgfs-gles3   %{buildroot}%{fgdir}/
 %{fgdir}
 
 %changelog
+* Fri Sep 11 2026 Sebastian <smatkovi@github> - 2020.3.19-12
+- AI flight plans that end with an EOF marker after END load again. FGData's
+  KSFO_depart_south_28L.xml, the only plan of the aircraft_demo scenario,
+  does, and FlightGear refused it ("Flightplan missing END node"): the 737
+  was created but stayed at 0/0 without speed. Waypoints named EOF are now
+  skipped while reading (fg_aiplan_eof.py). Measured: the aircraft departs
+  28L and climbs through 5400 ft at 320 kt within a minute.
+
 * Fri Sep 11 2026 Sebastian <smatkovi@github> - 2020.3.19-11
 - Canvas vector paths draw under GLES: the glass-cockpit displays (A320
   PFD/ND/ECAM and every other Canvas instrument) were blank except for

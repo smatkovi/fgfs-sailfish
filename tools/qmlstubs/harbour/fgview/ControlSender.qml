@@ -16,4 +16,18 @@ QtObject {
     function calibrate() {}
     function startEngine() {}
     function stopEngine() {}
+    property var tutorials: []
+    property bool tutorialRunning: false
+    property string tutorialMessage: ""
+    property string tutorialName: ""
+    property bool paused: false
+    function setPaused(p, hz) {}
+    function refreshTutorials() {}
+    function startTutorial(n) {}
+    function stopTutorial() {}
+    property bool reversing: false
+    property real reverseDepth: 0
+    function setReverseDepth(d) {}
+    function setReverse(on) {}
+    function startEngineWhenLoaded(t) {}
 }

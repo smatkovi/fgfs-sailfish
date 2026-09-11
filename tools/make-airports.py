@@ -183,7 +183,7 @@ def main(argv):
                 if code == "1" and len(f0) >= 6:
                     cur = {"icao": f0[4], "name": " ".join(f0[5:]),
                            "hard": 0.0, "any": 0.0,
-                           "lat": None, "lon": None}
+                           "lat": None, "lon": None, "rwys": []}
                 else:
                     cur = None
                 continue
@@ -198,6 +198,11 @@ def main(argv):
                     la, lo = float(f0[9]), float(f0[10])
                     length = haversine(la, lo, float(f0[18]), float(f0[19]))
                     surface = f0[2]
+                    # both ends by name (fields 8 and 17), for the runway
+                    # picker and FlightGear's --runway
+                    for end in (f0[8], f0[17]):
+                        if end not in cur["rwys"]:
+                            cur["rwys"].append(end)
                     if cur["lat"] is None:
                         cur["lat"], cur["lon"] = la, lo
                 except ValueError:
@@ -234,7 +239,8 @@ def main(argv):
         # start, and needs them for that
         entry = [a["icao"], a["name"], int(round(max(a["hard"], a["any"]))),
                  round(a["lat"], 3) if a.get("lat") is not None else 0,
-                 round(a["lon"], 3) if a.get("lon") is not None else 0]
+                 round(a["lon"], 3) if a.get("lon") is not None else 0,
+                 sorted(a.get("rwys", []))]
         d = by_country.setdefault(c, {"large": [], "small": []})
         d["large" if big else "small"].append(entry)
 

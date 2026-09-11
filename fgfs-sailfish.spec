@@ -6,7 +6,7 @@
 Name:       fgfs-sailfish
 Summary:    FlightGear flight simulator runtime for Sailfish OS
 Version:    2020.3.19
-Release:    9
+Release:    10
 License:    GPLv2+
 Group:      Amusements/Games
 URL:        https://github.com/smatkovi/fgfs-sailfish
@@ -91,6 +91,12 @@ install -m 0644 %{SOURCE3} %{buildroot}/opt/fgfs/share/fgtouch.xml
 /opt/mesa-zink
 
 %changelog
+* Fri Sep 11 2026 Sebastian <smatkovi@github> - 2020.3.19-10
+- AI flight plans that end with an EOF marker after END load again
+  (aircraft_demo's KSFO_depart_south_28L.xml was refused with "Flightplan
+  missing END node" and its 737 never moved); fg_aiplan_eof.py, same fix
+  as fgfs-sailfish-gles -12.
+
 * Fri Sep 11 2026 Sebastian <smatkovi@github> - 2020.3.19-9
 - fgfs-scenery --check exits 2 when the tiles are on the disk but no
   finished run is on record (scenery fetched before there were records);

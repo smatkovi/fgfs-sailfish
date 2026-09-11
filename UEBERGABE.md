@@ -1,6 +1,6 @@
 # FlightGear auf Sailfish OS — Übergabe
 
-Stand: 9. September 2026. Dieses Dokument fasst zusammen, wo das Projekt
+Stand: 11. September 2026. Dieses Dokument fasst zusammen, wo das Projekt
 steht, wie die Umgebung bedient wird und welcher Fehler offen ist. Es ist
 für jemanden geschrieben, der die Arbeit übernimmt und den bisherigen
 Verlauf nicht kennt.
@@ -306,6 +306,40 @@ und `/sim/freeze/clock`, dazu Bildrate auf 2 Hz — FlightGear zeichnet auch
 eingefroren weiter, und das ist, was den Akku kostet. Ausgelöst über eine
 gebundene Eigenschaft auf `Qt.application.active`, nicht über
 `Connections` — ein falscher Signalname dort bleibt still.
+
+## App 0.10.1–0.11.1: Start, Szenarien, Anflug
+
+* **Motorstart** zuerst über die Routine des Flugzeugs (`autostart`/`startup`
+  in dessen Nasal-Namensräumen), Rotorbremse immer los (ec135: 291 U/min;
+  BEFUNDE P48).
+* **Cockpit öffnet verlässlich:** `cockpitPush`-Timer wiederholt, solange
+  `pageStack.busy` (P47).
+* **Wache gegen verschwundene Slots:** `python3 tools-check-qml-api.py` vor
+  jedem App-Bau; 0 Lücken erwartet (P50).
+* **Bild zwischen Schubhebel und Knöpfen**, FlightGear rendert mit
+  `--geometry=<Spalten>x720` in dieser Form.
+* **Schubumkehr:** unteres Stück des Hebels (REV); `systems.toggleFastRevThrust`
+  wo vorhanden, sonst `reverser`-Properties. Am A320 noch nicht gemessen.
+* **Bahnwahl** (Bahnenden aus apt.dat, `make-airports.py`) und **Startart**
+  am Boden / in der Luft / im Endanflug (`--offset-distance`,
+  `--glideslope`, `--trim`, Schub je Flugzeugart nach `sceneryloaded`; P49).
+* **Szenarien mit festem Ort** starten am Flughafen ihres Orts (0.11.1,
+  P46); `aircraft_demo` braucht dazu `fg_aiplan_eof.py` im FlightGear-Bau.
+
+## Sailfish OS 5.0 (F(x)tec Pro1-X, 192.168.1.9)
+
+glibc 2.30 — die 5.2-Pakete laufen dort nicht. Eigenes SDK-Ziel
+`SailfishOS-5.0.0.62-aarch64` mit Tooling gleichen Namens; Bäume
+`build-gles3-sfos50` neben `build-gles3`, plib in `~/plib-sfos50`.
+Nur GLES3 — der Zink-Stack ist nicht nachgebaut, `fgfs-sailfish` für 5.0
+enthält nur `fgfs-run`, `fgfs-scenery`, `fgtouch.xml`.
+
+* Bauen: `sfos50-driver.sh` auf dem Host (`STAGES="plib simgear flightgear"`),
+  ruft im Container `sfos50-stack.sh <stufe>` und als root
+  `sfos50-root-copy.sh <stufe>`; OSG vorher mit `sfos50-osg.sh`.
+* Packen: `sfos50/pack-sfos50.sh` im Container → `~/rpms-sfos50/`
+  (Release-Suffix `.sfos50`, gibt die benötigten GLIBC-Versionen aus).
+* Einzelheiten und Stolpersteine: BEFUNDE P51.
 
 ## Noch offen, unabhängig davon
 

@@ -10,7 +10,7 @@ QtObject {
     property string speed: ""
     property string simLog: ""
     function downloadData() {}
-    function startSim(a, b, c, d, e, f) {}
+    function startSim(a, b, c, d, e, f, g, h, i) {}
     function stopSim() {}
     function fgRoot() { return "" }
     property var aircraft: []
@@ -22,4 +22,9 @@ QtObject {
     function fetchCatalog() {}
     function installAircraft(id, dir, url) {}
     function removeAircraft(dir) {}
+    property bool sceneryBusy: false
+    property var scenarios: []
+    signal sceneryReady()
+    function envValue(name) { return "" }
+    function fetchSceneryFor(lat, lon) {}
 }
