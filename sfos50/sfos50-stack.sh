@@ -47,6 +47,12 @@ cmake_tree() {  # name src cflags cxxflags
 }
 
 case $STAGE_NAME in
+osg)
+  # the OpenSceneGraph GLES3 tree, configured from the 5.2 build's cache
+  # like the others; CMAKE_C(XX)_FLAGS were empty there
+  cmake_tree osg ~/OpenSceneGraph-OpenSceneGraph-3.6.5 "" ""
+  ls ~/stage50-osg/opt/osg-gles3/lib*/libosg.so.3.6.5 >/dev/null || fail "libosg missing"
+  ;;
 plib)
   # Same configuration as the 5.2 build: desktop GL headers only for
   # declarations (the static libs reference GLES2 functions alone), taken

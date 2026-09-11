@@ -2362,3 +2362,43 @@ nach 20 s vorbei, mit stillen Lücken von 17 und 25 s danach.
 Stopps nach ~4000 Zählerschritten). Läuft: ein Dauerlauf mit Bildzähler.
 `gdb` und `strace` sind auf dem Gerät; `ptrace_scope=1`, also nur mit gdb
 als Elternprozess (`GDB_WRAP=1`).
+
+## P54 — Review der Runde (Workflow, 4 Prüfer, je Befund ein Gegenprüfer)
+
+Bestätigt und in 0.11.3 / den sfos50-Skripten behoben:
+* **Luftstart unter Grund:** `--altitude=3000` ist MSL; ab ~3000 ft
+  Platzhöhe (KDEN 5431, SLLP 13313) stand das Flugzeug auf der Bahn.
+  `make-airports.py` schreibt jetzt die Platzhöhe (apt.dat Zeile 1, Feld 1)
+  als 7. Element; Start = Höhe + 3000. Neu erzeugte Listen weichen sonst
+  in keinem Eintrag ab (Vergleich aller 214 Dateien).
+* **A320-Umkehr, Schleife:** nach 16 Versuchen Schluss, ein Ausfahren im
+  16. Versuch ohne Tiefenübernahme (0.65 blieb). Jetzt: Versuch alle 0,25 s,
+  solange gewünscht; Anfragen tragen eine Seriennummer, nur die neueste
+  Schleife läuft; „ausgefahren" = irgendein Triebwerk (sonst hätte ein nur
+  einseitig ausgefahrener Reverser den Toggle wieder einfahren lassen).
+  Nachgemessen: Hebel 0.25 → 3 s später nicht ausgefahren (MAN); Hebel 0 →
+  3 s später beide aus, state IDLE; Tiefe 1.0 → 0.65, 0.5 → 0.35; aus →
+  beide eingefahren, 0.
+* **Abgebrochene Berührung:** kein `onCanceled` → Reverser blieben aus.
+* **Vorwärtsschub vor dem Einfahren:** Hebel aus der REV-Zone nach oben
+  schickte sofort Schub (UDP 30 Hz), das Einfahren kam per Telnet (5 Hz).
+  Vorwärtsschub folgt jetzt 300 ms später.
+* **Bahn verworfen**, wenn das Szenario am gewählten Flughafen selbst
+  startet; Hinweis „startet stattdessen" auch dann.
+* **Szenarioliste nach dem ersten Datendownload leer** bis zum Neustart.
+* **nearestAirports** machte ~742 000 QVariantMap-Zugriffe beim App-Start;
+  jetzt einfache Felder je Szenario.
+* sfos50: `sfos50-osg.sh` testete/packte den alten Zielbaum (jetzt reiner
+  Test des eingespielten Baums, Bau als Stufe `osg` im Treiber);
+  `sdk50.sh` löschte `~/sfos50`; Treiber prüfte `docker cp` nicht;
+  fgfs-sailfish-Release fest 9 statt aus der 5.2-Spec; die 5.0-App zog
+  `fgfs-sailfish-gles` nicht nach.
+
+Nicht behoben/offen: im letzten A320-Lauf starteten die Triebwerke nicht
+(329 s, Telnet-Lesungen lückenhaft) — der Start-Code ist unverändert, war
+in den Läufen davor nach 28–30 s oben; zu beobachten.
+
+*Nutzermeldung:* Auf dem Xperia 10 V (Adreno 619) 20–30 fps, mehr als auf
+Jolla Phone 2026 und Pro1-X. Vom Telefon aus nicht erreichbar (SSH-Timeout),
+daher nicht selbst gemessen. Pro1-X im Dauerlauf (Meer, keine Szenerie):
+15 fps über 12 min, Laden 408–464 s.

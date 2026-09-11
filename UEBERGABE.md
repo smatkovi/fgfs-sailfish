@@ -334,12 +334,15 @@ glibc 2.30 — die 5.2-Pakete laufen dort nicht. Eigenes SDK-Ziel
 Nur GLES3 — der Zink-Stack ist nicht nachgebaut, `fgfs-sailfish` für 5.0
 enthält nur `fgfs-run`, `fgfs-scenery`, `fgtouch.xml`.
 
-* Bauen: `sfos50-driver.sh` auf dem Host (`STAGES="plib simgear flightgear"`),
-  ruft im Container `sfos50-stack.sh <stufe>` und als root
-  `sfos50-root-copy.sh <stufe>`; OSG vorher mit `sfos50-osg.sh`.
+* Bauen: `sfos50-driver.sh` auf dem Host (Vorgabe
+  `STAGES="osg plib simgear flightgear"`), ruft im Container
+  `sfos50-stack.sh <stufe>` und als root `sfos50-root-copy.sh <stufe>`.
+  `sfos50-osg.sh` prüft danach nur noch den eingespielten OSG-Baum
+  (GLIBC-Versionen, Modelltest).
 * Packen: `sfos50/pack-sfos50.sh` im Container → `~/rpms-sfos50/`
   (Release-Suffix `.sfos50`, gibt die benötigten GLIBC-Versionen aus).
-* Einzelheiten und Stolpersteine: BEFUNDE P51.
+* Einzelheiten und Stolpersteine: BEFUNDE P51; erste Läufe auf dem Gerät
+  P53 (läuft, Laden 7–8 min, beim Erststart +2 min Navigationsdaten).
 
 ## Noch offen, unabhängig davon
 

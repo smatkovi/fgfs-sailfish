@@ -12,7 +12,11 @@ rm -rf $OUT; mkdir -p $OUT
 
 echo "== fgfs-sailfish (5.0: starter, scenery tool, protocol)"
 W=$HOME/rpmbuild50-fgfs-sailfish; rm -rf $W; mkdir -p $W/rpm
-cp $S50/fgfs-sailfish-sfos50.spec $W/rpm/fgfs-sailfish.spec
+# same release number as the 5.2 fgfs-sailfish, with the suffix, so a
+# repack after a change there is a newer package here too
+R52=$(sed -n 's/^Release:[[:space:]]*//p' $REPO/fgfs-sailfish.spec | head -1)
+sed "s/^Release:.*/Release:    $R52.sfos50/" $S50/fgfs-sailfish-sfos50.spec > $W/rpm/fgfs-sailfish.spec
+grep -m1 '^Release' $W/rpm/fgfs-sailfish.spec
 install -m 0755 $REPO/bin/fgfs-run $REPO/bin/fgfs-scenery $W/rpm/
 install -m 0644 $REPO/share/fgtouch.xml $W/rpm/
 (cd $W && mb2 -t $T50 build) || true
@@ -45,6 +49,17 @@ W=$HOME/fgview-build50; rm -rf $W; mkdir -p $W
 (cd $HOME/fgview-build && tar cf - --exclude=RPMS --exclude='*.o' --exclude='moc_*' --exclude=Makefile --exclude=harbour-fgview.moc --exclude=./harbour-fgview --exclude=./.qmake.stash .) | (cd $W && tar xf -)
 sed_release() { python3 -c "import re,sys; p=sys.argv[1]; s=open(p).read(); s=re.sub(r'^(Release:\s*)(\S+)', lambda m: m.group(1)+m.group(2).split('.sfos50')[0]+'.sfos50', s, count=1, flags=re.M); open(p,'w').write(s)" "$1"; }
 sed_release $W/rpm/harbour-fgview.spec
+# on 5.0 the GLES3 trees are the only simulator there is (no Zink), and
+# the app starts with that backend
+python3 - $W/rpm/harbour-fgview.spec <<'PY'
+import sys
+p = sys.argv[1]; s = open(p).read()
+if 'Requires:   fgfs-sailfish-gles' not in s:
+    s = s.replace('Requires:   fgfs-sailfish >= 2020.3.19-9\n',
+                  'Requires:   fgfs-sailfish >= 2020.3.19-9\nRequires:   fgfs-sailfish-gles\n', 1)
+    assert 'Requires:   fgfs-sailfish-gles' in s
+    open(p, 'w').write(s)
+PY
 grep -m1 '^Release' $W/rpm/harbour-fgview.spec
 (cd $W && mb2 -t $T50 --no-fix-version build) || true
 cp $W/RPMS/harbour-fgview-*.rpm $OUT/

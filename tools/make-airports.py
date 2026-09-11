@@ -181,8 +181,12 @@ def main(argv):
                 # runway rows are not attributed to the previous airport,
                 # but they are not collected.
                 if code == "1" and len(f0) >= 6:
+                    try:
+                        elev = int(round(float(f0[1])))
+                    except ValueError:
+                        elev = 0
                     cur = {"icao": f0[4], "name": " ".join(f0[5:]),
-                           "hard": 0.0, "any": 0.0,
+                           "hard": 0.0, "any": 0.0, "elev": elev,
                            "lat": None, "lon": None, "rwys": []}
                 else:
                     cur = None
@@ -236,11 +240,13 @@ def main(argv):
         big = a["hard"] >= LARGE_METRES
         # icao, name, longest runway, and the coordinates: the app fetches
         # the TerraSync scenery around the departure airport before a
-        # start, and needs them for that
+        # start, and needs them for that; then the runway ends, and the
+        # field elevation in feet - FlightGear's --altitude is above sea
+        # level, so a start "3000 ft up" has to add it
         entry = [a["icao"], a["name"], int(round(max(a["hard"], a["any"]))),
                  round(a["lat"], 3) if a.get("lat") is not None else 0,
                  round(a["lon"], 3) if a.get("lon") is not None else 0,
-                 sorted(a.get("rwys", []))]
+                 sorted(a.get("rwys", [])), a.get("elev", 0)]
         d = by_country.setdefault(c, {"large": [], "small": []})
         d["large" if big else "small"].append(entry)
 
