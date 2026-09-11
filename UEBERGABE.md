@@ -279,8 +279,8 @@ innen, sodass die Prüfung direkt nach erfolgreichem Abruf scheiterte.
 ## Lektionen und Szenarien (App 0.10.0)
 
 **Lektionen** = FlightGears Tutorials, die es je Flugzeug gibt (c172p:
-vierzehn, vom Preflight bis zum Triebwerksausfall). Knopf „Lessons" auf
-der Flugseite → Liste aus `/sim/tutorials` (über den Telnet-Kanal
+vierzehn, vom Preflight bis zum Triebwerksausfall). **Langes Drücken auf
+„View"** auf der Flugseite → Liste aus `/sim/tutorials` (über den Telnet-Kanal
 gelesen), Start per Nasal. Die Anweisungen zeigt FlightGear sonst in
 einem PUI-Fenster, das dieser Bau nicht hat — die App liest sie aus
 `/sim/tutorials/last-message` (alle 1,5 s) und blendet sie über dem Bild
@@ -296,6 +296,10 @@ gefunden, 7 mit Flugzeugträger). Auswahl auf der Startseite; bei einem
 Träger startet das Flugzeug auf dem Deck (`--carrier` hat in FlightGear
 Vorrang vor `--airport`) und die Szenerie wird **am Schiff** geholt, nicht
 am Flughafen. AI-Modelle werden nur für ein Szenario eingeschaltet.
+
+Kein eigener Knopf dafür: die Steuerspalte hat acht Reihen, eine neunte
+passt nicht mehr auf den Bildschirm. „View" wird hervorgehoben, solange
+eine Lektion läuft, und die Einstellungen nennen den Griff.
 
 **Pause im Hintergrund** (Einstellungen, per Vorgabe an): `/sim/freeze/master`
 und `/sim/freeze/clock`, dazu Bildrate auf 2 Hz — FlightGear zeichnet auch
