@@ -1,0 +1,4 @@
+module harbour.fgview
+FgRuntime 1.0 FgRuntime.qml
+ControlSender 1.0 ControlSender.qml
+FrameItem 1.0 FrameItem.qml

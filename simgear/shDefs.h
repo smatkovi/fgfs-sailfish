@@ -161,7 +161,14 @@ SHfloat getMaxFloat();
 
 /* OpenGL headers */
 
-#if defined(VG_API_LINUX) || defined(VG_API_FREEBSD) || defined(VG_API_OPENBSD)
+#if defined(SG_GLES2)
+/* Unter GLES gibt es kein GL/gl.h. ShivaVG selbst nutzt allerdings
+   Fixed-Function-Aufrufe - baubar heisst hier nicht lauffaehig. */
+#include <GLES2/gl2.h>
+#include <GLES2/gl2ext.h>
+/* the GL 1.x subset ShivaVG uses, implemented on ES2 (shGLES.c) */
+#include "shGLES.h"
+#elif defined(VG_API_LINUX) || defined(VG_API_FREEBSD) || defined(VG_API_OPENBSD)
     #include <GL/gl.h>
 #elif defined(VG_API_MACOSX)
     #include <OpenGL/gl.h>

@@ -1,0 +1,47 @@
+include (SimGearComponent)
+
+set(HEADERS
+  canvas_fwd.hxx
+  Canvas.hxx
+  CanvasEvent.hxx
+  CanvasEventManager.hxx
+  CanvasEventTypes.hxx
+  CanvasEventVisitor.hxx
+  CanvasMgr.hxx
+  CanvasObjectPlacement.hxx
+  CanvasPlacement.hxx
+  CanvasSystemAdapter.hxx
+  CanvasWindow.hxx
+  ODGauge.hxx
+  VGInitOperation.hxx
+)
+
+set(SOURCES
+  Canvas.cxx
+  CanvasEvent.cxx
+  CanvasEventManager.cxx
+  CanvasEventVisitor.cxx
+  CanvasMgr.cxx
+  CanvasObjectPlacement.cxx
+  CanvasPlacement.cxx
+  CanvasWindow.cxx
+  ODGauge.cxx
+  VGInitOperation.cxx
+)
+
+#add_subdirectory(ShivaVG/src)
+# shVgu.c ist reine Mathematik ohne GL-Aufrufe; FlightGear
+# braucht daraus vguComputeWarpQuadToSquare
+# ShivaVG itself again, on the GLES shim shGLES.c instead of the stubs:
+# the canvas paths (glass cockpit displays) draw through it.
+set(SHIVAVG_SOURCES "")
+foreach(f shArrays.c shContext.c shExtensions.c shGeometry.c shImage.c shPaint.c
+          shParams.c shPath.c shPipeline.c shVectors.c shVgu.c shGLES.c)
+  list(APPEND SHIVAVG_SOURCES "ShivaVG/src/${f}")
+endforeach()
+simgear_scene_component(canvas_vgu canvas "${SHIVAVG_SOURCES}" "")
+add_subdirectory(elements)
+add_subdirectory(events)
+add_subdirectory(layout)
+
+simgear_scene_component(canvas canvas "${SOURCES}" "${HEADERS}")

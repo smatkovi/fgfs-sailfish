@@ -1929,7 +1929,33 @@ bool State::convertShaderSourceForGLES(Shader::Type type, std::string& source) c
        GLSL ES 3.00 has 3D textures, textureLod() and in/out without extensions */
     const GLExtensions* ext = GLExtensions::Get(getContextID(), false);
     const bool es3 = ext && ext->glVersion >= 3.0f;
+    const std::string before = source;
     source = osg_gles::convert(source, type == Shader::VERTEX, aliases, es3);
+
+    /* FlightGear GLES port: OSG_GLES_DUMP_SHADERS=<dir> writes what goes in
+       and what comes out, so the code running on the device can be read. */
+    {
+        static const char* dir = ::getenv("OSG_GLES_DUMP_SHADERS");
+        if (dir && *dir)
+        {
+            const char* ext = (type == Shader::VERTEX) ? "vert" : "frag";
+            unsigned long h = 5381;
+            for (std::string::size_type i = 0; i < before.size(); ++i)
+                h = ((h << 5) + h) + (unsigned char)before[i];
+            char name[512];
+            snprintf(name, sizeof name, "%s/%08lx.%s", dir, h & 0xffffffffUL, ext);
+            FILE* f = fopen(name, "wx");
+            if (f)
+            {
+                fputs("/* ---- converted ---- */\n", f);
+                fputs(source.c_str(), f);
+                fputs("\n/* ---- original ---- */\n", f);
+                fputs(before.c_str(), f);
+                fclose(f);
+                OSG_WARN << "DUMPSHADER " << name << std::endl;
+            }
+        }
+    }
     return true;
 }
 
@@ -1947,6 +1973,41 @@ void State::applyFallbackProgramIfNeeded()
     if (off) return;
 
     const bool textured = getLastAppliedTextureAttribute(0, StateAttribute::TEXTURE) != 0;
+    if (::getenv("FGFS_GLASS_PROBE"))
+    {
+        static int logged = 0;
+        if (logged < 3000)
+        {
+            ++logged;
+            unsigned int tid = 0;
+            const StateAttribute* sa = getLastAppliedTextureAttribute(0, StateAttribute::TEXTURE);
+            const Texture* tx = dynamic_cast<const Texture*>(sa);
+            const Texture::TextureObject* to = tx ? tx->getTextureObject(getContextID()) : 0;
+            if (to) tid = to->id();
+            std::ostringstream os;
+            os << "OWNERPROBE texid=" << tid;
+            if (getCurrentViewport())
+                os << " vp=" << (int)getCurrentViewport()->width() << "x" << (int)getCurrentViewport()->height();
+            os << " |";
+            for (StateSetStack::const_iterator it = _stateStateStack.begin(); it != _stateStateStack.end(); ++it)
+            {
+                const StateSet* ss = *it;
+                os << " [m" << (int)ss->getMode(GL_BLEND)
+                   << (ss->getAttribute(StateAttribute::PROGRAM) ? "P" : "-");
+                const StateSet::ParentList& pl = ss->getParents();
+                if (!pl.empty() && pl[0])
+                {
+                    os << " " << pl[0]->className();
+                    const std::string& n = pl[0]->getName();
+                    if (!n.empty()) os << ":" << n.substr(0, 28);
+                }
+                const std::string& sn = ss->getName();
+                if (!sn.empty()) os << " ss:" << sn.substr(0, 20);
+                os << "]";
+            }
+            OSG_WARN << os.str() << std::endl;
+        }
+    }
     ref_ptr<Program>& prog = _fallbackProgram[textured ? 1 : 0];
     if (!prog)
     {
@@ -1958,13 +2019,17 @@ void State::applyFallbackProgramIfNeeded()
             "attribute vec4 osg_Color;\n"
             "attribute vec4 osg_MultiTexCoord0;\n"
             "uniform mat4 osg_ModelViewProjectionMatrix;\n"
-            "uniform mat4 osg_TextureMatrix0;\n"
+
             "varying vec4 fgfs_color;\n"
             "varying vec2 fgfs_tc;\n"
             "void main() {\n"
             "  gl_Position = osg_ModelViewProjectionMatrix * osg_Vertex;\n"
             "  fgfs_color = osg_Color;\n"
-            "  fgfs_tc = (osg_TextureMatrix0 * osg_MultiTexCoord0).st;\n"
+            /* No texture matrix: this program stands in for geometry that
+               has no effect, so there is no TexMat either - and an unset
+               uniform is a zero matrix, which put every fragment on the
+               same texel. */
+            "  fgfs_tc = osg_MultiTexCoord0.st;\n"
             "}\n";
         const char* fsPlain =
             "precision mediump float;\n"

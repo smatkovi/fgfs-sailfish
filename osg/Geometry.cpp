@@ -13,6 +13,7 @@
 #include <stdlib.h>
 
 #include <osg/Geometry>
+#include <osg/Program>
 #include <sstream>
 #include <osg/Timer>
 #include <osg/Notify>
@@ -899,6 +900,65 @@ void Geometry::drawImplementation(RenderInfo& renderInfo) const
     drawVertexArraysImplementation(renderInfo);
 
     if (checkForGLErrors) state.checkGLErrors("Geometry::drawImplementation() after vertex arrays setup.");
+    if (::getenv("FGFS_DRAWPROBE"))
+    {
+        static int logged = 0;
+        const Vec4Array* ca = dynamic_cast<const Vec4Array*>(_colorArray.get());
+        if (ca && ca->getBinding() == Array::BIND_OVERALL && ca->size() == 1 && (*ca)[0].a() < 0.99f && logged < 3000
+            && !(getNumParents() && getParent(0)->getNumParents() && getParent(0)->getParent(0)->getNumParents()
+                 && getParent(0)->getParent(0)->getParent(0)->getName() == "splashGroup"))
+        {
+            ++logged;
+            GLint prog = 0, tex = 0, src = 0, dst = 0;
+            glGetIntegerv(GL_CURRENT_PROGRAM, &prog);
+            glGetIntegerv(GL_TEXTURE_BINDING_2D, &tex);
+            glGetIntegerv(GL_BLEND_SRC_ALPHA, &src);
+            glGetIntegerv(GL_BLEND_DST_ALPHA, &dst);
+            GLfloat cur[4] = { -1, -1, -1, -1 };
+            const int loc = state.getColorAlias()._location;
+            if (loc >= 0) glGetVertexAttribfv(loc, GL_CURRENT_VERTEX_ATTRIB, cur);
+            GLint enabled = 0;
+            if (loc >= 0) glGetVertexAttribiv(loc, GL_VERTEX_ATTRIB_ARRAY_ENABLED, &enabled);
+            GLfloat mat[4] = { -1, -1, -1, -1 };
+            GLint mloc = -1;
+            if (prog) mloc = glGetUniformLocation(prog, "osg_FrontMaterial.diffuse");
+            if (mloc >= 0) glGetUniformfv(prog, mloc, mat);
+            std::ostringstream os;
+            os << "DRAWPROBE alpha=" << (*ca)[0].a()
+               << " prog=" << prog << " blend=" << (int)glIsEnabled(GL_BLEND)
+               << " src=0x" << std::hex << src << " dst=0x" << dst << std::dec
+               << " tex=" << tex
+               << " colorLoc=" << loc << " arrayEnabled=" << enabled
+               << " curColor=" << cur[0] << "," << cur[1] << "," << cur[2] << "," << cur[3]
+               << " matDiffuseUniform=" << (mloc >= 0 ? "yes" : "no") << " a=" << mat[3]
+               << " geom=[" << getName().substr(0, 24) << "]";
+            {
+                const Program* pr = 0;
+                if (state.getLastAppliedProgramObject()) pr = state.getLastAppliedProgramObject()->getProgram();
+                os << " progName=[" << (pr ? pr->getName().substr(0, 40) : std::string("-")) << "]";
+                /* the state set stack: which node owns each level, and
+                   whether an effect pass is among them */
+                os << " stack=";
+                const State::StateSetStack& st = state.getStateSetStack();
+                for (State::StateSetStack::const_iterator it = st.begin(); it != st.end(); ++it)
+                {
+                    const StateSet* ss = *it;
+                    os << "[" << ss->className() << " m" << (int)ss->getMode(GL_BLEND)
+                       << (ss->getAttribute(StateAttribute::PROGRAM) ? "P" : "-");
+                    const StateSet::ParentList& pl = ss->getParents();
+                    if (!pl.empty() && pl[0]) os << " " << pl[0]->className() << ":" << pl[0]->getName().substr(0, 16);
+                    os << "]";
+                }
+            }
+            const Node* n = getNumParents() ? getParent(0) : 0;
+            for (int d = 0; n && d < 5; ++d)
+            {
+                os << " <" << n->className() << ":" << n->getName().substr(0, 24);
+                n = n->getNumParents() ? n->getParent(0) : 0;
+            }
+            OSG_WARN << os.str() << std::endl;
+        }
+    }
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     //
@@ -921,7 +981,6 @@ void Geometry::drawVertexArraysImplementation(RenderInfo& renderInfo) const
 {
     State& state = *renderInfo.getState();
     VertexArrayState* vas = state.getCurrentVertexArrayState();
-    ++state._fgfsNumDrawables;
 
 #if !defined(OSG_GL_FIXED_FUNCTION_AVAILABLE)
     /* FlightGear GLES port: terrain tiles are large; where do their texture
@@ -961,6 +1020,191 @@ void Geometry::drawVertexArraysImplementation(RenderInfo& renderInfo) const
             os << " normals=" << (_normalArray.valid() ? _normalArray->getNumElements() : 0)
                << " colors=" << (_colorArray.valid() ? _colorArray->getNumElements() : 0);
             OSG_WARN << os.str() << std::endl;
+        }
+    }
+#endif
+
+#if !defined(OSG_GL_FIXED_FUNCTION_AVAILABLE)
+    /* FlightGear GLES port: terrain tiles are large; where do their texture
+       coordinates go?  Gated by OSG_GLES_DEBUG_AFTER / OSG_GLES_DEBUG_MINVERTS. */
+    {
+        static double after = -1.0;
+        static unsigned int minVerts = 0;
+        static osg::Timer_t startTick = osg::Timer::instance()->tick();
+        static int logged = 0;
+        if (after < 0.0)
+        {
+            const char* a = getenv("OSG_GLES_DEBUG_AFTER");
+            const char* m = getenv("OSG_GLES_DEBUG_MINVERTS");
+            after = (a && *a) ? atof(a) : 0.0;
+            minVerts = (m && *m) ? atoi(m) : 500;
+        }
+        const unsigned int numVerts = _vertexArray.valid() ? _vertexArray->getNumElements() : 0;
+        if (logged < 12 && numVerts >= minVerts &&
+            osg::Timer::instance()->delta_s(startTick, osg::Timer::instance()->tick()) >= after)
+        {
+            ++logged;
+            std::ostringstream os;
+            os << "bigGeom verts=" << numVerts << " name=[" << getName() << "]";
+            os << " texUnits=" << _texCoordList.size();
+            for (unsigned int unit = 0; unit < _texCoordList.size(); ++unit)
+            {
+                const Array* a = _texCoordList[unit].get();
+                os << " tex" << unit << "=" << (a ? a->getNumElements() : 0);
+                if (a) os << "(size=" << a->getDataSize() << ",bind=" << a->getBinding() << ")";
+            }
+            os << " attribs=" << _vertexAttribList.size();
+            for (unsigned int i = 0; i < _vertexAttribList.size(); ++i)
+            {
+                const Array* a = _vertexAttribList[i].get();
+                if (a) os << " attr" << i << "=" << a->getNumElements() << "(size=" << a->getDataSize() << ",bind=" << a->getBinding() << ")";
+            }
+            os << " normals=" << (_normalArray.valid() ? _normalArray->getNumElements() : 0)
+               << " colors=" << (_colorArray.valid() ? _colorArray->getNumElements() : 0);
+            OSG_WARN << os.str() << std::endl;
+        }
+    }
+#endif
+    ++state._fgfsNumDrawables;
+
+#if !defined(OSG_GL_FIXED_FUNCTION_AVAILABLE)
+    /* FlightGear GLES port: terrain tiles are large; where do their texture
+       coordinates go?  Gated by OSG_GLES_DEBUG_AFTER / OSG_GLES_DEBUG_MINVERTS. */
+    {
+        static double after = -1.0;
+        static unsigned int minVerts = 0;
+        static osg::Timer_t startTick = osg::Timer::instance()->tick();
+        static int logged = 0;
+        if (after < 0.0)
+        {
+            const char* a = getenv("OSG_GLES_DEBUG_AFTER");
+            const char* m = getenv("OSG_GLES_DEBUG_MINVERTS");
+            after = (a && *a) ? atof(a) : 0.0;
+            minVerts = (m && *m) ? atoi(m) : 500;
+        }
+        /* Which texture is on unit 0?  Lets the probe find a particular
+           drawable - the instrument faces are small and drawn among
+           thousands of others. */
+        std::string texName;
+        {
+            /* What is actually bound on unit 0 at draw time - the effect puts
+               the texture on the pass state set, not on the drawable. */
+            const osg::StateAttribute* sa =
+                state.getLastAppliedTextureAttribute(0, osg::StateAttribute::TEXTURE);
+            const osg::Texture* t = dynamic_cast<const osg::Texture*>(sa);
+            const osg::Image* img = t ? t->getImage(0) : 0;
+            if (img) texName = img->getFileName();
+            std::string::size_type sl = texName.find_last_of('/');
+            if (sl != std::string::npos) texName = texName.substr(sl + 1);
+        }
+        static const char* wanted = getenv("OSG_GLES_DEBUG_TEXNAME");
+        static const int maxLog = (getenv("OSG_GLES_DEBUG_MAXLOG") && *getenv("OSG_GLES_DEBUG_MAXLOG"))
+                                  ? atoi(getenv("OSG_GLES_DEBUG_MAXLOG")) : 12;
+        if (wanted && *wanted && texName.find(wanted) == std::string::npos) return;
+        const unsigned int numVerts = _vertexArray.valid() ? _vertexArray->getNumElements() : 0;
+        if (logged < maxLog && numVerts >= minVerts &&
+            osg::Timer::instance()->delta_s(startTick, osg::Timer::instance()->tick()) >= after)
+        {
+            ++logged;
+            std::ostringstream os;
+            os << "bigGeom verts=" << numVerts << " name=[" << getName() << "]"
+               << " tex=[" << texName << "]";
+            os << " texUnits=" << _texCoordList.size();
+            for (unsigned int unit = 0; unit < _texCoordList.size(); ++unit)
+            {
+                const Array* a = _texCoordList[unit].get();
+                os << " tex" << unit << "=" << (a ? a->getNumElements() : 0);
+                if (a) os << "(size=" << a->getDataSize() << ",bind=" << a->getBinding() << ")";
+            }
+            os << " attribs=" << _vertexAttribList.size();
+            for (unsigned int i = 0; i < _vertexAttribList.size(); ++i)
+            {
+                const Array* a = _vertexAttribList[i].get();
+                if (a) os << " attr" << i << "=" << a->getNumElements() << "(size=" << a->getDataSize() << ",bind=" << a->getBinding() << ")";
+            }
+            os << " normals=" << (_normalArray.valid() ? _normalArray->getNumElements() : 0)
+               << " colors=" << (_colorArray.valid() ? _colorArray->getNumElements() : 0);
+            OSG_WARN << os.str() << std::endl;
+        }
+    }
+#endif
+
+#if !defined(OSG_GL_FIXED_FUNCTION_AVAILABLE)
+    /* FlightGear GLES port, OSG_GLES_DEBUG_ATTRSTATE=1: what does GL say
+       about the texture coordinate attribute for this drawable? */
+    {
+        static const int probe = (::getenv("OSG_GLES_DEBUG_ATTRSTATE") != 0) ? 1 : 0;
+        static const char* wantTex = ::getenv("OSG_GLES_DEBUG_TEXNAME");
+        static int logged = 0;
+        if (probe && logged < 40 && !_texCoordList.empty() && _texCoordList[0].valid())
+        {
+            std::string texName;
+            {
+                const osg::StateAttribute* sa =
+                    state.getLastAppliedTextureAttribute(0, osg::StateAttribute::TEXTURE);
+                const osg::Texture* t = dynamic_cast<const osg::Texture*>(sa);
+                const osg::Image* img = t ? t->getImage(0) : 0;
+                if (img) texName = img->getFileName();
+                std::string::size_type sl = texName.find_last_of('/');
+                if (sl != std::string::npos) texName = texName.substr(sl + 1);
+            }
+            if (!(wantTex && *wantTex && texName.find(wantTex) == std::string::npos))
+            {
+                ++logged;
+                const int slot = state.getTexCoordAliasList().empty()
+                                 ? -1 : (int)state.getTexCoordAliasList()[0]._location;
+                GLint enabled = -1, size = -1, stride = -1, bufBinding = -1;
+                if (slot >= 0)
+                {
+                    glGetVertexAttribiv(slot, GL_VERTEX_ATTRIB_ARRAY_ENABLED, &enabled);
+                    glGetVertexAttribiv(slot, GL_VERTEX_ATTRIB_ARRAY_SIZE, &size);
+                    glGetVertexAttribiv(slot, GL_VERTEX_ATTRIB_ARRAY_STRIDE, &stride);
+                    glGetVertexAttribiv(slot, GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING, &bufBinding);
+                }
+                OSG_WARN << "ATTRSTATE [" << texName << "] verts="
+                         << (_vertexArray.valid() ? _vertexArray->getNumElements() : 0)
+                         << " slot=" << slot << " enabled=" << enabled
+                         << " size=" << size << " stride=" << stride
+                         << " buffer=" << bufBinding << std::endl;
+            }
+        }
+    }
+#endif
+
+#if !defined(OSG_GL_FIXED_FUNCTION_AVAILABLE)
+    /* FlightGear GLES port, OSG_GLES_DEBUG_ATTRLOC=1: where does the program
+       that is bound right now keep osg_MultiTexCoord0, and where do we send
+       the texture coordinates? */
+    {
+        static const int probe = (::getenv("OSG_GLES_DEBUG_ATTRLOC") != 0) ? 1 : 0;
+        static const char* wantTex = ::getenv("OSG_GLES_DEBUG_TEXNAME");
+        static int logged = 0;
+        if (probe && logged < 40 && !_texCoordList.empty() && _texCoordList[0].valid())
+        {
+            std::string texName;
+            {
+                const osg::StateAttribute* sa =
+                    state.getLastAppliedTextureAttribute(0, osg::StateAttribute::TEXTURE);
+                const osg::Texture* t = dynamic_cast<const osg::Texture*>(sa);
+                const osg::Image* img = t ? t->getImage(0) : 0;
+                if (img) texName = img->getFileName();
+                std::string::size_type sl = texName.find_last_of('/');
+                if (sl != std::string::npos) texName = texName.substr(sl + 1);
+            }
+            if (!(wantTex && *wantTex && texName.find(wantTex) == std::string::npos))
+            {
+                ++logged;
+                const Program::PerContextProgram* pcp = state.getLastAppliedProgramObject();
+                const int inProgram = pcp ? (int)pcp->getAttribLocation("osg_MultiTexCoord0") : -2;
+                const int dispatchTo = state.getTexCoordAliasList().empty()
+                                       ? -1 : (int)state.getTexCoordAliasList()[0]._location;
+                OSG_WARN << "ATTRLOC [" << texName << "] program="
+                         << (pcp ? pcp->getProgram()->getName() : std::string("none"))
+                         << " osg_MultiTexCoord0 at " << inProgram
+                         << ", dispatched to " << dispatchTo
+                         << (inProgram >= 0 && inProgram != dispatchTo ? "  MISMATCH" : "")
+                         << std::endl;
+            }
         }
     }
 #endif

@@ -6,7 +6,7 @@
 Name:       fgfs-sailfish
 Summary:    FlightGear flight simulator runtime for Sailfish OS
 Version:    2020.3.19
-Release:    5
+Release:    9
 License:    GPLv2+
 Group:      Amusements/Games
 URL:        https://github.com/smatkovi/fgfs-sailfish
@@ -91,6 +91,44 @@ install -m 0644 %{SOURCE3} %{buildroot}/opt/fgfs/share/fgtouch.xml
 /opt/mesa-zink
 
 %changelog
+* Fri Sep 11 2026 Sebastian <smatkovi@github> - 2020.3.19-9
+- fgfs-scenery --check exits 2 when the tiles are on the disk but no
+  finished run is on record (scenery fetched before there were records);
+  fgfs-run starts at once in that case. The fetch is back to Terrain and
+  Objects, the two trees organised by tile: Airports and Models are
+  world-wide, and walking their thousands of indexes held a start for
+  twenty minutes.
+
+* Fri Sep 11 2026 Sebastian <smatkovi@github> - 2020.3.19-8
+- fgfs-scenery remembers finished regions (<target>/.fgsync-regions) and
+  answers --check offline: is the box around --lat/--lon covered by a run
+  that read every index and downloaded everything? A run that lost a
+  mirror halfway or whose aria2c failed records nothing and is repeated.
+- fgfs-run --region asks that check before it goes to the mirrors: with the
+  scenery on record it starts at once, offline too; otherwise it fetches
+  Terrain, Objects, Airports and Models around the airport and says so on
+  stdout ("Szenerie ... vorhanden / geladen / fehlgeschlagen"), which the
+  app turns into its status line. FGFS_SCENERY_REFRESH=1 forces the
+  comparison with the servers.
+
+* Thu Sep 10 2026 Sebastian <smatkovi@github> - 2020.3.19-7
+- fgfs-run finds the GLES trees under /home/.system/fgfs, where
+  fgfs-sailfish-gles-9 puts them, and still accepts /opt so that a system
+  with the new starter and the old runtime keeps working. Zink itself stays
+  in /opt: it is 135 MB, and fgfs-run, fgfs-scenery and fgtouch.xml live
+  there and are referred to by absolute path from several places.
+
+* Thu Sep 10 2026 Sebastian <smatkovi@github> - 2020.3.19-6
+- fgfs-run: the GLES backends now default to
+  OSG_VERTEX_BUFFER_HINT=VERTEX_ARRAY_OBJECT. Draw is CPU bound on
+  per-drawable attribute setup rather than on fill rate - rendering a
+  quarter of the pixels leaves draw time unchanged - and there are about
+  a thousand draw calls per frame, so carrying that setup in a vertex
+  array object instead of repeating it per call pays off. Measured on
+  LOWW with the c172p on a freshly booted device: frame 74.1 -> 66.6 ms,
+  draw 39.3 -> 31.3 ms. Set OSG_VERTEX_BUFFER_HINT=NO_PREFERENCE to get
+  the old behaviour back
+
 * Thu Sep 03 2026 Sebastian <smatkovi@github> - 2020.3.19-5
 - fgtouch.xml ships from the repository; eighth field sends the throttle
   to current-engine as well, which the cockpit lever's animation reads.

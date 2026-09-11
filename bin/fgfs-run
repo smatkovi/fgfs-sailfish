@@ -3,8 +3,10 @@
 #
 #   fgfs-run [--backend=zink|gles2|gles3] [--region=LAT,LON[,RADIUS]] [fgfs options...]
 #
-# Picks the library paths and environment for the chosen backend, optionally
-# fetches the scenery for a region first, and execs the matching binary.
+# Picks the library paths and environment for the chosen backend, makes sure
+# the scenery for a region is there first (checked offline against the
+# regions fgfs-scenery has finished; fetched only when missing, or always
+# with FGFS_SCENERY_REFRESH=1), and execs the matching binary.
 # Without --backend it uses FGFS_BACKEND, or zink, which is the only backend
 # with the PUI menus, the HUD and the canvas displays.
 #
@@ -26,9 +28,9 @@ for arg in "$@"; do
         --region=*)  REGION="${arg#*=}"; continue ;;
         --fg-root=*) FGROOT="${arg#*=}" ;;
         --list-backends)
-            echo "zink   /opt/fgfs         Mesa/Zink, full feature set (menus, HUD, canvas)"
-            echo "gles2  /opt/fgfs-gles    native GLES2, no fixed-function features"
-            echo "gles3  /opt/fgfs-gles3   native GLES3, no fixed-function features"
+            echo "zink   /opt/fgfs                        Mesa/Zink, full feature set (menus, HUD, canvas)"
+            echo "gles2  /home/.system/fgfs/fgfs-gles      native GLES2, no fixed-function features"
+            echo "gles3  /home/.system/fgfs/fgfs-gles3     native GLES3, no fixed-function features"
             exit 0 ;;
     esac
     collected="$collected $arg"
@@ -42,11 +44,30 @@ if [ -n "$REGION" ]; then
     REST=${REGION#*,}
     LON=${REST%%,*}
     case "$REST" in *,*) RADIUS=${REST##*,} ;; esac
-    echo "fgfs-run: Szenerie fuer $LAT,$LON (Radius $RADIUS Grad) wird geprueft ..."
     if [ -x /opt/fgfs/bin/fgfs-scenery ]; then
-        /opt/fgfs/bin/fgfs-scenery --lat "$LAT" --lon "$LON" --radius "$RADIUS" \
-            --target "$SCENERY" --subtrees Terrain,Objects || \
-            echo "fgfs-run: Szenerie-Abgleich fehlgeschlagen, starte mit dem vorhandenen Bestand"
+        # Offline first: a finished fetch around the airport is on record,
+        # so there is nothing to ask the mirrors.  FGFS_SCENERY_REFRESH=1
+        # forces the comparison with the servers anyway.
+        # exit 0: a finished fetch covers it; 2: tiles on the disk, no record
+        # (fetched before there were records) - both good enough to start
+        if [ "${FGFS_SCENERY_REFRESH:-0}" = 1 ]; then
+            rc=1
+        else
+            /opt/fgfs/bin/fgfs-scenery --check --lat "$LAT" --lon "$LON" --radius "$RADIUS" \
+                --target "$SCENERY" --subtrees Terrain,Objects 2>/dev/null
+            rc=$?
+        fi
+        if [ "$rc" = 0 ] || [ "$rc" = 2 ]; then
+            echo "fgfs-run: Szenerie fuer $LAT,$LON vorhanden"
+        else
+            echo "fgfs-run: Szenerie fuer $LAT,$LON (Radius $RADIUS Grad) wird geladen ..."
+            if /opt/fgfs/bin/fgfs-scenery --lat "$LAT" --lon "$LON" --radius "$RADIUS" \
+                   --target "$SCENERY" --subtrees Terrain,Objects; then
+                echo "fgfs-run: Szenerie fuer $LAT,$LON geladen"
+            else
+                echo "fgfs-run: Szenerie-Abgleich fehlgeschlagen, starte mit dem Bestand auf der Platte"
+            fi
+        fi
     else
         echo "fgfs-run: fgfs-scenery fehlt, ueberspringe den Abgleich" >&2
     fi
@@ -90,22 +111,51 @@ case "$BACKEND" in
         unset GALLIUM_DRIVER
         ;;
     gles2|gles3)
+        # The GLES trees moved from /opt to /home/.system/fgfs in
+        # fgfs-sailfish-gles-2020.3.19-9: they are 793 MB and the root
+        # filesystem has under 2 GB free.  /opt is still accepted so that a
+        # system with the new starter and the old runtime keeps working.
+        fgtree() {
+            for base in /home/.system/fgfs /opt; do
+                [ -d "$base/$1" ] && { echo "$base/$1"; return; }
+            done
+            echo "/home/.system/fgfs/$1"      # for the error message below
+        }
         if [ "$BACKEND" = gles2 ]; then
-            PREFIX=/opt/fgfs-gles; OSGDIR=/opt/osg-gles
+            PREFIX=$(fgtree fgfs-gles); OSGDIR=$(fgtree osg-gles)
         else
-            PREFIX=/opt/fgfs-gles3; OSGDIR=/opt/osg-gles3
+            PREFIX=$(fgtree fgfs-gles3); OSGDIR=$(fgtree osg-gles3)
         fi
         LD_LIBRARY_PATH="$(libdirs "$OSGDIR" "$PREFIX")"
         OSG_LIBRARY_PATH="$(plugindir "$OSGDIR" "$PREFIX")"
         # the device EGL stack has no dma-heap we could import from
         FGFS_DMA_HEAP=${FGFS_DMA_HEAP:-/dev/null}
-        export LD_LIBRARY_PATH OSG_LIBRARY_PATH FGFS_DMA_HEAP
+        # Vertex array objects.  Draw is CPU bound on per-drawable attribute
+        # setup, not on fill rate: rendering a quarter of the pixels leaves
+        # draw unchanged, so the cost is per draw call, and there are about
+        # a thousand of those per frame.  A VAO carries that setup once
+        # instead of on every call.  Measured on LOWW with the c172p,
+        # threaded, 150 s settling: frame 87.5 -> 72.4 ms, draw 44.4 -> 34.9.
+        # VERTEX_BUFFER_OBJECT is the weaker variant (draw 43.0).
+        # OSG_VERTEX_BUFFER_HINT overrides; NO_PREFERENCE restores the old
+        # client-array behaviour.
+        OSG_VERTEX_BUFFER_HINT=${OSG_VERTEX_BUFFER_HINT:-VERTEX_ARRAY_OBJECT}
+        export LD_LIBRARY_PATH OSG_LIBRARY_PATH FGFS_DMA_HEAP OSG_VERTEX_BUFFER_HINT
         # Draw on its own thread: the update phase then overlaps with the
         # draw, measured 84 -> 47 ms per frame.  FGFS_THREADING overrides.
         set -- "$@" "--prop:/sim/rendering/multithreading-mode=${FGFS_THREADING:-DrawThreadPerContext}"
         # 60 Hz flight model: plenty for light aircraft, half the JSBSim
         # work.  FGFS_MODEL_HZ overrides for aircraft that need more.
         set -- "$@" "--prop:/sim/model-hz=${FGFS_MODEL_HZ:-60}"
+        # Random vegetation off by default.  A census of one frame's
+        # drawables found 2404 of about 4000 carrying deciduous-alt.png or
+        # mixed-alt.png - roughly 60 percent of every frame is trees - and
+        # draw is bound by the number of calls, not by fill rate.  Measured
+        # on LOWW with the c172p: frame 68.5 -> 45.3 ms, draw 33.7 -> 18.7,
+        # 14.6 -> 22.1 fps.  For comparison, switching the clouds off is
+        # worth 2.4 ms, because they are only 5 percent of the drawables.
+        # FGFS_TREES=true puts them back.
+        set -- "$@" "--prop:/sim/rendering/random-vegetation=${FGFS_TREES:-false}"
         ;;
     *)
         echo "fgfs-run: unbekanntes Backend '$BACKEND' - siehe --list-backends" >&2

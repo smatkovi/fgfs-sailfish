@@ -12,6 +12,8 @@
 */
 
 #include <osg/VertexArrayState>
+#include <osg/Texture>
+#include <osg/Image>
 #include <osg/State>
 #include <osg/Timer>
 #include <osg/ContextData>
@@ -606,7 +608,16 @@ bool VertexArrayState::correctArrayDispatchAssigned(const ArrayDispatch* ad)
 namespace {
     VertexArrayState::ArrayDispatch* getOrCreateVertexAttributeDispatch(VertexArrayState::ArrayDispatchList& list, int slot)
     {
+#if defined(OSG_GL_FIXED_FUNCTION_AVAILABLE)
         list.resize(slot + 1);
+#else
+        /* FlightGear GLES port: grow only, as in assignTexCoordArrayDispatcher().
+           resize() also shrinks, and a drawable that needs a lower slot than the
+           previous one would drop the dispatchers above it - including slot 8,
+           where osg_MultiTexCoord0 lives without fixed function.  The next
+           drawable with texture coordinates then read (0,0). */
+        if (static_cast<unsigned int>(slot) + 1 > list.size()) list.resize(slot + 1);
+#endif
         osg::ref_ptr<VertexArrayState::ArrayDispatch>& ad = list[slot];
         if (!ad.valid())
             ad = new VertexAttribArrayDispatch(slot);
@@ -776,6 +787,42 @@ void VertexArrayState::release()
 
 void VertexArrayState::setArray(ArrayDispatch* vad, osg::State& state, const osg::Array* new_array)
 {
+#if !defined(OSG_GL_FIXED_FUNCTION_AVAILABLE)
+    /* FlightGear GLES port, OSG_GLES_DEBUG_SETARRAY=1: which path does a
+       texture coordinate array take?  Only the first enables the attribute. */
+    {
+        static const int probe = (::getenv("OSG_GLES_DEBUG_SETARRAY") != 0) ? 1 : 0;
+        static const char* wantTex = ::getenv("OSG_GLES_DEBUG_TEXNAME");
+        static int logged = 0;
+        if (probe && logged < 60 && vad && !_texCoordArrays.empty()
+            && vad == _texCoordArrays[0].get())
+        {
+            /* Which texture is bound while this array is dispatched? */
+            std::string texName;
+            {
+                const osg::StateAttribute* sa =
+                    state.getLastAppliedTextureAttribute(0, osg::StateAttribute::TEXTURE);
+                const osg::Texture* t = dynamic_cast<const osg::Texture*>(sa);
+                const osg::Image* img = t ? t->getImage(0) : 0;
+                if (img) texName = img->getFileName();
+                std::string::size_type sl = texName.find_last_of('/');
+                if (sl != std::string::npos) texName = texName.substr(sl + 1);
+            }
+            if (wantTex && *wantTex && texName.find(wantTex) == std::string::npos) return;
+            ++logged;
+            const char* path = !new_array ? "disable"
+                             : (vad->array == 0 ? "ENABLE+dispatch"
+                             : ((new_array != vad->array
+                                 || new_array->getModifiedCount() != vad->modifiedCount)
+                                ? "dispatch only" : "skipped (same array)"));
+            OSG_WARN << "SETARRAY tex0 [" << texName << "] " << path
+                     << " n=" << (new_array ? new_array->getNumElements() : 0)
+                     << " active=" << (vad->active ? 1 : 0)
+                     << " had=" << (vad->array ? 1 : 0)
+                     << " class=" << vad->className() << std::endl;
+        }
+    }
+#endif
     if (new_array)
     {
         if (!vad->active)

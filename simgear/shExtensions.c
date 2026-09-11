@@ -76,7 +76,14 @@ PFVOID shGetProcAddress(const char *name)
   /* TODO: Mac OS glGetProcAddress implementation */
   return (PFVOID)NULL;
   #else
+  #if defined(SG_GLES2)
+  /* never reached under ES (no ARB extensions there), and libEGL is not
+     on the link line */
+  (void)name;
+  return (PFVOID)NULL;
+  #else
   return (PFVOID)eglGetProcAddress((const unsigned char *)name);
+  #endif
   #endif
 }
 

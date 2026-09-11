@@ -1095,6 +1095,16 @@ void Program::PerContextProgram::linkProgram(osg::State& state)
             {
                 _attribInfoMap[reinterpret_cast<char*>(name)] = ActiveVarInfo(loc,type,size);
 
+#if !defined(OSG_GL_FIXED_FUNCTION_AVAILABLE)
+                /* FlightGear GLES port, OSG_GLES_DEBUG_ATTRIBS=1 */
+                {
+                    static const int probe = (::getenv("OSG_GLES_DEBUG_ATTRIBS") != 0) ? 1 : 0;
+                    if (probe)
+                        OSG_WARN << "ATTRIBS program=[" << _program->getName() << "] handle=" << _glProgramHandle
+                                 << " " << name << " loc=" << loc << " size=" << size
+                                 << " bound=" << _program->getAttribBindingList().size() << std::endl;
+                }
+#endif
                 OSG_INFO << "\tAttrib \"" << name << "\""
                          << " loc=" << loc
                          << " size=" << size

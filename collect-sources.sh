@@ -39,6 +39,8 @@ src/osgViewer/GraphicsWindowEGL.cpp
 src/osg/Hint.cpp
 src/osg/Texture1D.cpp
 src/osgViewer/Renderer.cpp
+src/osgPlugins/ac/ac3d.cpp
+src/osg/FrameBufferObject.cpp
 "
 
 sg_files="
@@ -46,6 +48,15 @@ simgear/io/lowlevel.cxx
 simgear/misc/strutils.cxx
 simgear/scene/tgdb/SGReaderWriterBTG.cxx
 simgear/screen/gles_compat.h
+simgear/scene/material/Effect.cxx
+simgear/scene/material/Technique.cxx
+simgear/scene/model/model.cxx
+simgear/canvas/elements/CanvasPath.cxx
+simgear/canvas/ShivaVG/src/shDefs.h
+simgear/canvas/ShivaVG/src/shExtensions.c
+simgear/canvas/ShivaVG/src/shGLES.h
+simgear/canvas/ShivaVG/src/shGLES.c
+simgear/canvas/CMakeLists.txt:canvas-CMakeLists.txt
 "
 
 rm -rf "$OUT"
@@ -61,10 +72,13 @@ for f in $osg_files; do
         missing=1
     fi
 done
-for f in $sg_files; do
+for entry in $sg_files; do
+    # "path:name" stores the file under name (canvas/CMakeLists.txt would
+    # otherwise collide with any other CMakeLists.txt)
+    f=${entry%%:*}; name=${entry#*:}; [ "$name" = "$entry" ] && name=$(basename "$f")
     if [ -f "$SG/$f" ]; then
-        cp "$SG/$f" "$OUT/simgear/$(basename "$f")"
-        echo "  simgear/$(basename "$f")"
+        cp "$SG/$f" "$OUT/simgear/$name"
+        echo "  simgear/$name"
     else
         echo "  FEHLT: $SG/$f" >&2
         missing=1

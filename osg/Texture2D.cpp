@@ -282,6 +282,9 @@ void Texture2D::apply(State& state) const
                                  _textureWidth, _textureHeight, _numMipmapLevels);
 
             textureObject->setAllocated(true);
+            if (::getenv("FGFS_GLASS_PROBE"))
+                OSG_WARN << "TEXID id=" << textureObject->id() << " file=["
+                         << image->getFileName() << "]" << std::endl;
 #if !defined(OSG_GL_FIXED_FUNCTION_AVAILABLE)
             /* FlightGear GLES port: uploads driven by the IncrementalCompileOperation
                bypass the State error check; log the first ones with their result. */

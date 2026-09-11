@@ -3,10 +3,12 @@
 %define debug_package %{nil}
 %define __strip /bin/true
 
+%define fgdir /home/.system/fgfs
+
 Name:       fgfs-sailfish-gles
 Summary:    FlightGear native GLES backends for Sailfish OS
 Version:    2020.3.19
-Release:    7
+Release:    11
 License:    GPLv2+
 Group:      Amusements/Games
 URL:        https://github.com/smatkovi/fgfs-sailfish
@@ -30,17 +32,87 @@ pipeline. Selectable from harbour-fgview.
 
 %install
 rm -rf %{buildroot}
-mkdir -p %{buildroot}
-cp -a opt %{buildroot}/
+mkdir -p %{buildroot}%{fgdir}
+# The trees are built into the target's /opt and only moved here, at
+# packaging time, so nothing about the OSG or FlightGear build changes.
+#
+# Why not /opt: it lives on the root filesystem, which has 9.5 GB in total
+# and, with Android app support taking 2.3 GB of it, about 1.9 GB free.
+# These four trees are 793 MB of that. /home is a 218 GB partition with
+# 180 GB free, and /home/.system is where Sailfish already keeps system
+# data that does not belong on root - .appsupport and .zypp-cache are
+# there.
+#
+# An upgrade moves them by itself: rpm installs the new location first and
+# then removes the files of the old version, and the /opt copies are in the
+# old version only. No script, and nothing left behind.
+cp -a opt/osg-gles     %{buildroot}%{fgdir}/
+cp -a opt/osg-gles3    %{buildroot}%{fgdir}/
+cp -a opt/fgfs-gles    %{buildroot}%{fgdir}/
+cp -a opt/fgfs-gles3   %{buildroot}%{fgdir}/
 
 %files
 %defattr(-,root,root,-)
-/opt/osg-gles
-/opt/osg-gles3
-/opt/fgfs-gles
-/opt/fgfs-gles3
+%{fgdir}
 
 %changelog
+* Fri Sep 11 2026 Sebastian <smatkovi@github> - 2020.3.19-11
+- Canvas vector paths draw under GLES: the glass-cockpit displays (A320
+  PFD/ND/ECAM and every other Canvas instrument) were blank except for
+  text and images, because the GLES trees replaced ShivaVG - which speaks
+  OpenGL 1.x - with no-op stubs. ShivaVG is compiled again on a small
+  shim (shGLES.h/.c) that implements exactly the fixed-function subset it
+  uses on ES2: a matrix stack, immediate mode as triangle lists, client
+  arrays on the default VAO, 1D textures as Nx1 textures, texgen and the
+  texture matrix in a shader of its own. CanvasPath hands it OSG's
+  matrices and marks OSG's state dirty afterwards (sg_canvas_gles.py).
+- OSG: renderbuffers get sized internal formats under GLES. The canvas
+  attaches its packed depth/stencil buffer with the unsized GL_DEPTH_STENCIL,
+  which ES rejects; the FBO was incomplete, OSG fell back to the window
+  framebuffer, and without a stencil buffer ShivaVG painted every path as
+  its bounding box (ffp_gles32.py; BEFUNDE.md P39-P41).
+- The ES2 trees are rebuilt from the same sources and carry the same
+  fixes (glass effect fallback, canvas, renderbuffer formats).
+
+* Fri Sep 11 2026 Sebastian <smatkovi@github> - 2020.3.19-10
+- SimGear: an aircraft effect no longer vanishes because one of its shaders
+  is missing. With compositor support SimGear rewrites every shader path
+  Shaders/x to Compositor/Shaders/x and gave up when that file did not
+  exist; aircraft effects are written against the classic tree, so the
+  Katana's canopy effect (glassrain.eff, Shaders/glass-ALS.vert) failed to
+  build, makeEffect returned null, and the canopy was left as an
+  EffectGeode without an effect and without its state set - drawn through
+  the plain cull path with no blending, hence opaque. Now the classic
+  location is tried when the Compositor/ one is missing, and a technique
+  that still cannot be built is dropped with a log line instead of taking
+  the whole effect (and the fixed-function technique) down with it.
+  Measured on the Katana: the canopy geodes get their effect, are drawn
+  with the glass shader and GL_BLEND on (BEFUNDE.md P33-P38).
+- The diagnostic probes of the glass investigation are not compiled in;
+  the shipped SimGear is the patched pristine source.
+
+* Thu Sep 10 2026 Sebastian <smatkovi@github> - 2020.3.19-9
+- The four GLES trees now live under /home/.system/fgfs instead of /opt.
+  They are 793 MB, and the root filesystem has 1.9 GB free of 9.5 GB, most
+  of the rest being Android app support; /home has 180 GB free. Nothing in
+  the trees referred to /opt at run time - the only absolute paths were in
+  seventeen pkg-config files, which are build metadata - so this is a move
+  of the packaging, not of the build.
+- Upgrading moves them without a script: rpm writes the new location and
+  then removes the previous version's files, which are the /opt ones.
+
+* Thu Sep 10 2026 Sebastian <smatkovi@github> - 2020.3.19-8
+- OSG: the AC3D loader emitted GL_QUADS and GL_POLYGON, neither of which
+  exists under GLES. A draw call with such a mode rasterises nothing and
+  reports no GL error, so the surface silently disappeared. Quads are now
+  split into the two triangles GL_QUADS is specified to decompose into,
+  and polygons become triangle fans, both keeping the vertex order and so
+  the winding. This is what made the c172p's instrument dials black: a
+  dial face is a single four-cornered SURF, so it vanished entirely,
+  while needles and the curved moving parts carry triangles too and
+  survived - which made the fault look like it followed "fixed versus
+  moving" when it followed "quad versus triangle"
+
 * Fri Sep 04 2026 Sebastian <smatkovi@github> - 2020.3.19-7
 - OSG: geometry without a shader gets a built-in one - vertex colour,
   times the texture on unit 0 if there is one. GLES draws nothing without
