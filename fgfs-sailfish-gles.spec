@@ -8,7 +8,7 @@
 Name:       fgfs-sailfish-gles
 Summary:    FlightGear native GLES backends for Sailfish OS
 Version:    2020.3.19
-Release:    12
+Release:    13
 License:    GPLv2+
 Group:      Amusements/Games
 URL:        https://github.com/smatkovi/fgfs-sailfish
@@ -56,6 +56,21 @@ cp -a opt/fgfs-gles3   %{buildroot}%{fgdir}/
 %{fgdir}
 
 %changelog
+* Sat Sep 12 2026 Sebastian <smatkovi@github> - 2020.3.19-13
+- The VASI/PAPI approach lights are drawn under GLES. FlightGear paints
+  them as GL_POINTs in immediate mode, sized by a point sprite effect -
+  none of which exists under OpenGL ES, so the lights were missing. They
+  are now ordinary geometry in the scene: one camera-facing quad per light
+  with a round sprite, its size following the distance so a light stays a
+  few pixels wide from miles out, and a cull callback that writes the
+  colour every frame - red below the glide path, white above, nothing when
+  seen from behind. That is how X-Plane and MSFS draw their airport lights
+  too (sg_vasi_gles.py; BEFUNDE P55). Measured on the LOWW 29 approach:
+  four red lights from below the path, four white from above.
+- The lights hang in a plain geode instead of under the point sprite
+  effect: with that effect nothing reached the raster, whatever the
+  geometry said.
+
 * Fri Sep 11 2026 Sebastian <smatkovi@github> - 2020.3.19-12
 - AI flight plans that end with an EOF marker after END load again. FGData's
   KSFO_depart_south_28L.xml, the only plan of the aircraft_demo scenario,

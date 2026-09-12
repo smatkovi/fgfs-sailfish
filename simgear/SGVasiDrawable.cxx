@@ -29,17 +29,17 @@
 
 #include <simgear/scene/util/OsgMath.hxx>
 
-/* Die Anflugbefeuerung zeichnet im Immediate Mode, den es unter GLES2
-   nicht gibt. Die Aufrufe werden zu Leeroperationen - die VASI/PAPI-
-   Lichter bleiben unsichtbar, alles andere funktioniert. */
+/* Under GLES2 there is no immediate mode.  LightData::draw() is not used
+   there - SGLightFactory::getVasi hands out geometry instead - but it is
+   still compiled. */
 #ifdef SG_GLES2
 #  define glBegin(a)        ((void)0)
 #  define glEnd()           ((void)0)
 #  define glColor4fv(a)     ((void)0)
 #  define glNormal3fv(a)    ((void)0)
 #  define glVertex3fv(a)    ((void)0)
-#  ifndef GL_QUADS
-#    define GL_QUADS        0
+#  ifndef GL_POINTS
+#    define GL_POINTS       0
 #  endif
 #endif
 

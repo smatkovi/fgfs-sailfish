@@ -307,7 +307,7 @@ eingefroren weiter, und das ist, was den Akku kostet. Ausgelöst über eine
 gebundene Eigenschaft auf `Qt.application.active`, nicht über
 `Connections` — ein falscher Signalname dort bleibt still.
 
-## App 0.10.1–0.11.1: Start, Szenarien, Anflug
+## App 0.10.1–0.11.3: Start, Szenarien, Anflug
 
 * **Motorstart** zuerst über die Routine des Flugzeugs (`autostart`/`startup`
   in dessen Nasal-Namensräumen), Rotorbremse immer los (ec135: 291 U/min;
@@ -325,6 +325,13 @@ gebundene Eigenschaft auf `Qt.application.active`, nicht über
   `--glideslope`, `--trim`, Schub je Flugzeugart nach `sceneryloaded`; P49).
 * **Szenarien mit festem Ort** starten am Flughafen ihres Orts (0.11.1,
   P46); `aircraft_demo` braucht dazu `fg_aiplan_eof.py` im FlightGear-Bau.
+* **0.11.3** (aus dem Review, P54): Luftstart 3000 ft über Platz statt über
+  Meer — die Flughafenlisten tragen die Platzhöhe als 7. Element, ein vor
+  0.11.3 gewählter Flughafen muss dafür einmal neu gewählt werden; die
+  A320-Umkehr versucht es, solange der Finger in der Zone bleibt (jede
+  Anfrage mit Seriennummer, nur die neueste Nasal-Schleife läuft);
+  abgebrochene Berührung fährt ein; Vorwärtsschub erst 300 ms nach dem
+  Einfahren; Szenarioliste wird nach dem Datendownload neu gelesen.
 
 ## Sailfish OS 5.0 (F(x)tec Pro1-X, 192.168.1.9)
 

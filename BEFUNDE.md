@@ -2402,3 +2402,49 @@ in den Läufen davor nach 28–30 s oben; zu beobachten.
 Jolla Phone 2026 und Pro1-X. Vom Telefon aus nicht erreichbar (SSH-Timeout),
 daher nicht selbst gemessen. Pro1-X im Dauerlauf (Meer, keine Szenerie):
 15 fps über 12 min, Laden 408–464 s.
+
+## P55 — PAPI unter GLES: vier Anläufe, bis die Lichter im Bild waren
+
+Die Anflugbefeuerung (VASI/PAPI) fehlte im GLES-Bau. FlightGear zeichnet sie
+in `SGVasiDrawable` als `GL_POINT` im Immediate Mode; die Größe kommt vom
+Effekt `surface-lights-directional` über Punkt-Sprites, `glPointParameter`
+und Punktgröße aus dem Vertex-Programm. Unter GLES gibt es davon nichts, die
+Aufrufe waren Leeroperationen. (X-Plane und MSFS zeichnen ihre
+Flughafenlichter als zur Kamera gedrehte Billboards — der Weg, der hier
+bleibt.)
+
+Vier Befunde auf dem Weg, alle gemessen, jeder erklärt einen leeren Bildschirm:
+
+1. **Aus dem Drawable heraus zeichnen geht nicht.** Eine eigene
+   `osg::Geometry` in `drawImplementation` aufzurufen bringt nichts: Mit
+   Vertex-Array-Objekten — die dieser Port anfordert — bindet
+   `Geometry::drawImplementation` die Arrays nicht, das tut
+   `Drawable::draw()` eine Ebene höher. Sonde: Farben korrekt in den Arrays,
+   `glGetError` 0, kein Pixel im Bild.
+2. **Ohne Texturkoordinaten verschwindet alles.** Der Port bindet für
+   Geometrie ohne Shader seinen Ersatz-Shader; war eine Textur gebunden, ist
+   es die texturierte Fassung, und die multipliziert die Vertexfarbe mit der
+   Textur. Ohne Koordinaten wird die durchsichtige Ecke des Sprites
+   abgetastet — Farbe richtig, Alpha null.
+3. **Der Effekt der Anflugbefeuerung verhindert es ganz.** Selbst als
+   Geometrie im Szenenbaum blieb das Bild leer, solange die Lichter unter
+   `surface-lights-directional` hingen; dessen Techniken sind für
+   Punkt-Sprites geschrieben. Erst in einem schlichten `osg::Geode` (nur
+   Nebel-Zustand der Bodenlichter) erschienen sie.
+4. **Ein Meter ist zu klein.** Die gerichteten Lichter von SimGear sind
+   1-m-Dreiecke; auf 1,5 km ist das ein Drittel Bildpunkt. Die Größe muss
+   mit der Entfernung wachsen (aus Projektionsmatrix und Viewport), mit
+   4 Bildpunkten als Untergrenze und der echten Größe als Untergrenze in
+   Metern — sonst verschmelzen die vier Einheiten aus der Nähe zu einem
+   Balken (gesehen: erst ein roter Riegel, dann vier Lichter).
+
+**Umsetzung (`sg_vasi_gles.py`, fgfs-sailfish-gles -13):** ein Viereck je
+Licht, zur Kamera gedreht, mit runder Sprite-Textur (im Patch erzeugt), die
+Farbe je Bild aus einem Cull-Callback — rot unter, weiß über dem Gleitweg,
+nichts von hinten. **Messung LOWW 29, 0,7 nm:** aus 3° Anflug vier rote
+Lichter links der Schwelle (Farbe 235/90/90), aus 7° vier weiße
+(235/235/195); von hinten Alpha 0. `SG_VASI_PIXELS` stellt die Größe,
+`SG_VASI_PROBE=1` protokolliert Zahl, Entfernung, Größe und Farben.
+
+*Nicht geprüft:* VASI mit 6 und 12 Lichtern (nur der Code-Pfad steht),
+Nacht, und ob die Lichter in der Entfernung flimmern.
